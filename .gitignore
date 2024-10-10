@@ -1,0 +1,20 @@
+# Ignore CMake build directory
+build/
+
+# Ignore all files in the DEMs folder but keep the directory
+DEMs/*
+!DEMs/.gitkeep
+
+# Ignore all files in the Output directory but keep the directory
+DEMs/Output/*
+!DEMs/Output/.gitkeep
+
+*.o
+*.exe
+*.out
+*.so
+*.a
+*.dll
+*~
+*.bak
+*.tmp
