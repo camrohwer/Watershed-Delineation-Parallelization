@@ -17,8 +17,13 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
     float *flowDirData = (float *)CPLMalloc(sizeof(float) * width * height);
 
     // Read DEM data
-    demDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height,
+    CPLErr err;
+    err = demDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height,
                                             demData, width, height, GDT_Float32, 0, 0);
+    if (err != CE_None){
+        std::cerr << "Error reading DEM data: " << CPLGetLastErrorMsg() << std::endl;
+        exit(EXIT_FAILURE);
+    }
 
      // Initialize flow direction data
     for (int i = 0; i < width * height; ++i) {
@@ -61,8 +66,13 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
     }
 
     // Write flow direction data to the output dataset
-    flowDirDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
+    err = flowDirDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
                                                 flowDirData, width, height, GDT_Int32, 0, 0);
+
+    if (err != CE_None){
+        std::cerr << "Error reading DEM data: " << CPLGetLastErrorMsg() << std::endl;
+        exit(EXIT_FAILURE);
+    }
 
     // Cleanup
     CPLFree(demData);
@@ -71,7 +81,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
 
 int main(int argc, const char* argv[]) {
     if (argc != 2){
-        std::cout << "Please provide a filename for input raster" << std::endl;
+        std::cout << "Please provide a filepath for input raster" << std::endl;
         return -1;
     }
     GDALAllRegister();
@@ -87,8 +97,7 @@ int main(int argc, const char* argv[]) {
     }
 
     //create output raster for flow direction
-
-    const char *outputFilename = "flow_direction.tif";
+    const char *outputFilename = "../../DEMs/Output/flow_direction.tif";
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     GDALDataset *flowDirDataset = poDriver->Create(outputFilename,
                                                     demDataset->GetRasterXSize(),

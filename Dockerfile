@@ -24,8 +24,9 @@ RUN curl -o ~/miniconda.sh -O https://repo.anaconda.com/miniconda/Miniconda3-lat
 # Add Miniconda to the PATH for the Docker build process
 ENV PATH="/opt/conda/bin:$PATH"
 
-# Install Python 3.10 and GDAL 3.7.1 via Conda for compatibility
-RUN conda install -y -c conda-forge python=3.10 gdal=3.7.1 && conda clean -afy
+# Create a new conda environment with Python 3.10 and install GDAL
+RUN conda create -n myenv python=3.10 gdal=3.7.1 -c conda-forge && \
+    conda clean -afy
 
 # Set working directory
 WORKDIR /workspace
@@ -33,6 +34,5 @@ WORKDIR /workspace
 # Copy your code into the container
 COPY . /workspace
 
-# Default command to start a bash shell, allowing you to compile on demand
-CMD ["/bin/bash"]
-
+# Activate the conda environment and run a bash shell
+CMD ["bash", "-c", "source activate myenv && exec bash"]

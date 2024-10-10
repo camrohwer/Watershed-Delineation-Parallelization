@@ -3,10 +3,11 @@ my_project/
 ├── src/
 │   ├── flow_direction_iterative.cpp
 │   ├── flow_direction_parallel.cu
+├── build/
+├── DEMs/
+│   ├── Output/
 ├── CMakeLists.txt
 └── README.md
 
-mkdir -p build
-cd build
-cmake ..
-make
+cmake --build . --target flow_direction_iterative
+cmake --build . --target flow_direction_parallel

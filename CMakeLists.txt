@@ -21,14 +21,25 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Add include directories for GDAL
 include_directories(${GDAL_INCLUDE_DIRS})
 
-# Define the source files (C++ and CUDA)
-set(SOURCES
+# Define the source files for C++ (iterative version)
+set(ITERATIVE_SOURCES
     src/flow_direction_iterative.cpp
+)
+
+# Define the source files for CUDA (parallel version)
+set(PARALLEL_SOURCES
     src/flow_direction_parallel.cu
 )
 
-# Define the executable and link with GDAL
-add_executable(MyProject ${SOURCES})
+# Create an executable for the iterative (C++) version
+add_executable(flow_direction_iterative ${ITERATIVE_SOURCES})
 
-# Link GDAL library to your project
-target_link_libraries(MyProject ${GDAL_LIBRARIES})
+# Link the GDAL library to the C++ iterative executable
+target_link_libraries(flow_direction_iterative PRIVATE ${GDAL_LIBRARIES})
+
+# Create an executable for the parallel (CUDA) version
+add_executable(flow_direction_parallel ${PARALLEL_SOURCES})
+
+# Link the GDAL library to the CUDA parallel executable
+target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+
