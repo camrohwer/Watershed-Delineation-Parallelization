@@ -14,7 +14,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
     int width = demDataset->GetRasterXSize();
     int height = demDataset->GetRasterYSize();
     float *demData = (float *)CPLMalloc(sizeof(float) * width * height);
-    float *flowDirData = (float *)CPLMalloc(sizeof(float) * width * height);
+    int *flowDirData = (int *)CPLMalloc(sizeof(int) * width * height);
 
     // Read DEM data
     CPLErr err;
@@ -35,6 +35,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
         for (int x = 1; x < width - 1; ++x) {
             float center = demData[y * width + x];
 
+            if (center == FLOW_NODATA) continue;
             // Check neighbors
             float lowest = center;
             int direction = FLOW_NODATA;
@@ -45,7 +46,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
 
                     float neighbor = demData[(y + dy) * width + (x + dx)];
 
-                    if (neighbor < lowest) {
+                    if (neighbor < lowest && neighbor != FLOW_NODATA) {
                         lowest = neighbor;
                         // Determine the direction based on the neighbor's position
                         if (dy == -1 && dx == -1) direction = 1;  // North-West
@@ -62,7 +63,9 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
 
             // Assign the flow direction
             //printf("%d\n", direction);
-            flowDirData[y * width + x] = direction;
+            if (direction != FLOW_NODATA){
+                flowDirData[y * width + x] = direction;
+            }
         }
     }
 
