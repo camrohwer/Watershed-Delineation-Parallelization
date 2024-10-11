@@ -51,19 +51,24 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
                 for (int dx = -1; dx <= 1; ++dx) {
                     if (dx == 0 && dy == 0) continue; // Skip the center pixel
 
-                    float neighbor = demData[(y + dy) * width + (x + dx)];
+                    int neighborX = x + dx;
+                    int neighborY = y + dy;
 
-                    if (neighbor < lowest && neighbor != FLOW_NODATA) {
-                        lowest = neighbor;
-                        // Determine the direction based on the neighbor's position
-                        if (dy == -1 && dx == -1) dir = 1;  // North-West
-                        else if (dy == -1 && dx == 0) dir = 2; // North
-                        else if (dy == -1 && dx == 1) dir = 3; // North-East
-                        else if (dy == 0 && dx == 1) dir = 4;  // East
-                        else if (dy == 1 && dx == 1) dir = 5;  // South-East
-                        else if (dy == 1 && dx == 0) dir = 6;  // South
-                        else if (dy == 1 && dx == -1) dir = 7; // South-West
-                        else if (dy == 0 && dx == -1) dir = 8; // West
+                    if (isValidNeighbor(neighborX, neighborY, width, height)){
+                        float neighbor = demData[(y + dy) * width + (x + dx)];
+
+                        if (neighbor < lowest && neighbor != FLOW_NODATA) {
+                            lowest = neighbor;
+                            // Determine the direction based on the neighbor's position
+                            if (dy == -1 && dx == -1) dir = 1;  // North-West
+                            else if (dy == -1 && dx == 0) dir = 2; // North
+                            else if (dy == -1 && dx == 1) dir = 3; // North-East
+                            else if (dy == 0 && dx == 1) dir = 4;  // East
+                            else if (dy == 1 && dx == 1) dir = 5;  // South-East
+                            else if (dy == 1 && dx == 0) dir = 6;  // South
+                            else if (dy == 1 && dx == -1) dir = 7; // South-West
+                            else if (dy == 0 && dx == -1) dir = 8; // West
+                        }
                     }
                 }
             }
