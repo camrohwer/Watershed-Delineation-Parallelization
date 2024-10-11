@@ -9,6 +9,8 @@ DEMs/*
 DEMs/Output/*
 !DEMs/Output/.gitkeep
 
+.vscode/
+
 *.o
 *.exe
 *.out
