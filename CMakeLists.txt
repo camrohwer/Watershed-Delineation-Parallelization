@@ -43,3 +43,8 @@ add_executable(flow_direction_parallel ${PARALLEL_SOURCES})
 # Link the GDAL library to the CUDA parallel executable
 target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
+# Set CUDA architecture flags for the parallel executable
+#THIS IS FOR MY OLD GPU GTX780 ARCHITECTURE
+target_compile_options(flow_direction_parallel PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_35,code=sm_35>
+)

@@ -61,6 +61,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
             }
 
             // Assign the flow direction
+            //printf("%d\n", direction);
             flowDirData[y * width + x] = direction;
         }
     }
@@ -91,13 +92,13 @@ int main(int argc, const char* argv[]) {
     GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
 
     if (demDataset == NULL) {
-        std::cout << "Failed to open DEM" << std::endl;
+        std::cerr << "Failed to open DEM" << std::endl;
         return -1;
 
     }
 
     //create output raster for flow direction
-    const char *outputFilename = "../../DEMs/Output/flow_direction.tif";
+    const char *outputFilename = "../../DEMs/Output/iterative_flow_direction.tif";
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     GDALDataset *flowDirDataset = poDriver->Create(outputFilename,
                                                     demDataset->GetRasterXSize(),

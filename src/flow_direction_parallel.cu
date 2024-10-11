@@ -2,88 +2,136 @@
 #include <gdal_priv.h>
 #include <cuda_runtime.h>
 #include <cmath>
+#include <cstdio>
 
-__global__ void flowDirectionKernel(double* dem, int* flow_dir, int width, int height) {
+const int FLOW_NODATA = -1;
+
+__global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int height) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int index = y * width + x;
 
-    if (x >= width || y >= height) return;
+    //check if in bounds
+    if (x < width && y < height){
+        int idx = y * width + x;
+        float centre = dem[idx]; //get dem value at current pixel
 
-    int directions[8][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, 1}, {-1, 1}, {1, -1}};
-    int best_dir = -1;
-    double max_slope = -1;
+        //initalize flow dir to no data
+        flow_dir[idx] = FLOW_NODATA;
 
-    for (int i = 0; i < 8; ++i) {
-        int nx = x + directions[i][0];
-        int ny = y + directions[i][1];
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            double dz = dem[index] - dem[ny * width + nx];
-            double slope = dz / sqrt(pow(directions[i][0], 2) + pow(directions[i][1], 2));
-            if (slope > max_slope) {
-                max_slope = slope;
-                best_dir = i;
+        //check if centre is valid
+        if (centre != FLOW_NODATA){
+            //init lowest height and flow dir
+            float lowest = centre;
+            int dir = FLOW_NODATA;
+
+            //check neighbours
+            for (int dy = -1; dy <= 1; dy++){
+                for (int dx = -1; dx <= 1; dx++){
+                    if (dx == 0 && dy == 0) continue; //skip current pixel
+
+                    //find neightbours coords
+                    int nx = x + dx;
+                    int ny = y + dy;
+
+                    //check only valid pixels
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height){
+                        float n = dem[ny * width + nx]; //get neighbours value
+
+                        if (n < lowest){
+                            lowest = n;
+                            // Determine the direction based on the neighbor's position
+                            if (dy == -1 && dx == -1) dir = 1;  // North-West
+                            else if (dy == -1 && dx == 0) dir = 2; // North
+                            else if (dy == -1 && dx == 1) dir = 3; // North-East
+                            else if (dy == 0 && dx == 1) dir = 4;  // East
+                            else if (dy == 1 && dx == 1) dir = 5;  // South-East
+                            else if (dy == 1 && dx == 0) dir = 6;  // South
+                            else if (dy == 1 && dx == -1) dir = 7; // South-West
+                            else if (dy == 0 && dx == -1) dir = 8; // West
+                        }
+                    }
+                }
             }
+            //printf("%d\n",dir);
+            flow_dir[idx] = dir;
         }
     }
-    flow_dir[index] = best_dir;
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <DEM file path>" << std::endl;
-        return EXIT_FAILURE;
+    if (argc != 2){
+        std::cout << "Please provide a filepath for input raster" << std::endl;
+        return -1;
     }
-
-    // Initialize GDAL
     GDALAllRegister();
     
-    // Open the DEM file
-    GDALDataset* poDataset = (GDALDataset*)GDALOpen(argv[1], GA_ReadOnly);
-    if (poDataset == nullptr) {
+    // Open DEM
+    const char* input = argv[1];
+    GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
+
+    if (demDataset == NULL) {
         std::cerr << "Error opening DEM file." << std::endl;
-        return EXIT_FAILURE;
+        return -1;
+    }
+    //create output raster for flow direction
+    const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif";
+    GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDataset *flowDirDataset = poDriver->Create(outputFilename,
+                                                    demDataset->GetRasterXSize(),
+                                                    demDataset->GetRasterYSize(),
+                                                    1, GDT_Int32, NULL);
+
+    int width = demDataset->GetRasterXSize();
+    int height = demDataset->GetRasterYSize();
+    float *demData = (float *)CPLMalloc(sizeof(float) * width * height);
+
+    CPLErr err = demDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, demData, width, height, GDT_Float32, 0, 0);
+    if (err != CE_None){
+        std::cerr << "Error reading DEM data: " << CPLGetLastErrorMsg() << std::endl;
+        return -1;
     }
 
-    // Get raster size
-    int width = poDataset->GetRasterXSize();
-    int height = poDataset->GetRasterYSize();
-    
-    // Allocate memory for DEM data
-    double* h_dem = new double[width * height]; // DEM data
-    int* h_flow_dir = new int[width * height]; // Flow direction data
+    //allocating device mem
+    float *d_demData;
+    int *d_flowDirData;
+    cudaMalloc(&d_demData, sizeof(float) * width * height);
+    cudaMalloc(&d_flowDirData, sizeof(int) * width * height);
 
-    // Read DEM data
-    GDALRasterBand* poBand = poDataset->GetRasterBand(1);
-    poBand->RasterIO(GF_Read, 0, 0, width, height, h_dem, width, height, GDT_Float64, 0, 0);
+    //copy DEM data to device
+    cudaError_t memcpy_err = cudaMemcpy(d_demData, demData, sizeof(float) * width * height, cudaMemcpyHostToDevice);
+    if (memcpy_err != cudaSuccess){
+        std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err) << std::endl;
+        return -1;
+    }
 
-    // Allocate memory on GPU
-    double* d_dem;
-    int* d_flow_dir;
-    cudaMalloc(&d_dem, width * height * sizeof(double));
-    cudaMalloc(&d_flow_dir, width * height * sizeof(int));
+    //define grid and block size
+    dim3 blockSize(16,16);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
-    // Transfer DEM data to GPU
-    cudaMemcpy(d_dem, h_dem, width * height * sizeof(double), cudaMemcpyHostToDevice);
+    // Launch the CUDA kernel
+    flowDirectionKernel<<<gridSize, blockSize>>>(d_demData, d_flowDirData, width, height);
 
-    // Define grid and block size
-    dim3 threadsPerBlock(16, 16);
-    dim3 numBlocks((width + threadsPerBlock.x - 1) / threadsPerBlock.x, (height + threadsPerBlock.y - 1) / threadsPerBlock.y);
+    // Copy flow direction data back to host
+    int *flowDirData = (int *)CPLMalloc(sizeof(int) * width * height);
+    cudaMemcpy(flowDirData, d_flowDirData, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
 
-    // Launch kernel
-    flowDirectionKernel<<<numBlocks, threadsPerBlock>>>(d_dem, d_flow_dir, width, height);
+    // Write flow direction data to the output dataset
+    err = flowDirDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
+                                                     flowDirData, width, height, GDT_Int32, 0, 0);
+    if (err != CE_None) {
+        std::cerr << "Error writing flow direction data: " << CPLGetLastErrorMsg() << std::endl;
+        return -1;
+    }
 
-    // Transfer results back to host
-    cudaMemcpy(h_flow_dir, d_flow_dir, width * height * sizeof(int), cudaMemcpyDeviceToHost);
+    // Cleanup
+    CPLFree(demData);
+    CPLFree(flowDirData);
+    cudaFree(d_demData);
+    cudaFree(d_flowDirData);
+    GDALClose(demDataset);
+    GDALClose(flowDirDataset);
 
-    // Free GPU memory
-    cudaFree(d_dem);
-    cudaFree(d_flow_dir);
-
-    // Clean up
-    delete[] h_dem;
-    delete[] h_flow_dir;
-    GDALClose(poDataset);
+    std::cout << "Flow direction calculated and saved to " << outputFilename << std::endl;
 
     return 0;
 }
