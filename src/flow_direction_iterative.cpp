@@ -9,6 +9,11 @@
 
 const int FLOW_NODATA = -1;
 
+//valid neighbour check
+bool isValidNeighbor(int x, int y, int width, int height) {
+    return (x >= 0 && x < width && y >= 0 && y < height);
+}
+
 // Function to calculate flow direction using D8 method
 void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset) {
     int width = demDataset->GetRasterXSize();
@@ -55,7 +60,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
                         else if (dy == -1 && dx == 0) dir = 2; // North
                         else if (dy == -1 && dx == 1) dir = 3; // North-East
                         else if (dy == 0 && dx == 1) dir = 4;  // East
-                        else if (dy == 1 && dx == 1) dir = = 5;  // South-East
+                        else if (dy == 1 && dx == 1) dir = 5;  // South-East
                         else if (dy == 1 && dx == 0) dir = 6;  // South
                         else if (dy == 1 && dx == -1) dir = 7; // South-West
                         else if (dy == 0 && dx == -1) dir = 8; // West

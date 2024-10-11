@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 const int FLOW_NODATA = -1;
 
@@ -11,59 +12,54 @@ __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int he
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    //check if in bounds
-    if (x < width && y < height){
-        int idx = y * width + x;
-        float centre = dem[idx]; //get dem value at current pixel
+    if (x < 1 || x >= width || y < 1 || y >= height - 1) {
+        return; //skip boundary pixels
+    }
 
-        //initalize flow dir to no data
-        flow_dir[idx] = FLOW_NODATA;
+    int idx = y * width + x;
+    float centre = dem[idx]; //get dem value at current pixel
+    if (centre == FLOW_NODATA) return;
 
-        //check if centre is valid
-        if (centre != FLOW_NODATA){
-            //init lowest height and flow dir
-            float lowest = centre;
-            int dir = FLOW_NODATA;
+    float lowest = centre;
+    int dir = FLOW_NODATA;
+    flow_dir[idx] = FLOW_NODATA;
 
-            //check neighbours
-            for (int dy = -1; dy <= 1; dy++){
-                for (int dx = -1; dx <= 1; dx++){
-                    if (dx == 0 && dy == 0) continue; //skip current pixel
+    for (int dy = -1; dy <= 1; dy++){
+        for (int dx = -1; dx <= 1; dx++){
+            if (dx == 0 && dy == 0) continue; //skip current pixel
 
-                    //find neightbours coords
-                    int nx = x + dx;
-                    int ny = y + dy;
+            //find neightbours coords
+            int nx = x + dx;
+            int ny = y + dy;
 
-                    //check only valid pixels
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height){
-                        float n = dem[ny * width + nx]; //get neighbours value
+            //check only valid pixels
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height){
+                float n = dem[ny * width + nx]; //get neighbours value
 
-                        if (n < lowest){
-                            lowest = n;
-                            // Determine the direction based on the neighbor's position
-                            if (dy == -1 && dx == -1) dir = 1;  // North-West
-                            else if (dy == -1 && dx == 0) dir = 2; // North
-                            else if (dy == -1 && dx == 1) dir = 3; // North-East
-                            else if (dy == 0 && dx == 1) dir = 4;  // East
-                            else if (dy == 1 && dx == 1) dir = 5;  // South-East
-                            else if (dy == 1 && dx == 0) dir = 6;  // South
-                            else if (dy == 1 && dx == -1) dir = 7; // South-West
-                            else if (dy == 0 && dx == -1) dir = 8; // West
-                        }
-                    }
+                if (n < lowest){
+                    lowest = n;
+                    // Determine the direction based on the neighbor's position
+                    if (dy == -1 && dx == -1) dir = 1;  // North-West
+                    else if (dy == -1 && dx == 0) dir = 2; // North
+                    else if (dy == -1 && dx == 1) dir = 3; // North-East
+                    else if (dy == 0 && dx == 1) dir = 4;  // East
+                    else if (dy == 1 && dx == 1) dir = 5;  // South-East
+                    else if (dy == 1 && dx == 0) dir = 6;  // South
+                    else if (dy == 1 && dx == -1) dir = 7; // South-West
+                    else if (dy == 0 && dx == -1) dir = 8; // West
                 }
             }
-            //printf("%d\n",dir);
-            if (dir != FLOW_NODATA){
-                flow_dir[idx] = dir;
-            }
         }
+    }
+    //printf("%d\n",dir);
+    if (dir != FLOW_NODATA){
+        flow_dir[idx] = dir;
     }
 }
 
 int main(int argc, char* argv[]) {
     //checks for input file passed as arg
-    if (argc != 2){
+    if (argc < 2){
         std::cout << "Please provide a filepath for input raster" << std::endl;
         return -1;
     }
@@ -104,8 +100,19 @@ int main(int argc, char* argv[]) {
     //allocating device mem
     float *d_demData;
     int *d_flowDirData;
+
     cudaMalloc(&d_demData, sizeof(float) * width * height);
+    if (cudaMalloc(&d_demData, sizeof(float) * width * height) != cudaSuccess) {
+        std::cerr << "Error allocating memory for DEM on device." << std::endl;
+        return -1;
+    }
+
     cudaMalloc(&d_flowDirData, sizeof(int) * width * height);
+    if (cudaMalloc(&d_flowDirData, sizeof(int) * width * height) != cudaSuccess) {
+        std::cerr << "Error allocating memory for flow direction on device." << std::endl;
+        cudaFree(d_demData); // Free already allocated memory
+        return -1;
+    }
 
     //copy DEM data to device
     cudaError_t memcpy_err = cudaMemcpy(d_demData, demData, sizeof(float) * width * height, cudaMemcpyHostToDevice);
@@ -114,15 +121,27 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    /* 
+    int dim_x = std::atoi(argv[2]);
+    int dim_y = std::atoi(argv[3]);
+    dim3 blockSize(dim_x,dim_y);
+    */
+
     //define grid and block size
-    dim3 blockSize(16,16); //TODO experiment with block sizes to see if runtime could be faster
+    dim3 blockSize(8,8);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
     // Launch the CUDA kernel
     flowDirectionKernel<<<gridSize, blockSize>>>(d_demData, d_flowDirData, width, height);
+    cudaError_t kernel_err = cudaGetLastError();
+    if (kernel_err != cudaSuccess){
+        std::cerr << "Cuda kernel launch error: " << cudaGetErrorString(kernel_err) << std::endl;
+        return -1;
+    }
 
     // Copy flow direction data back to host
     int *flowDirData = (int *)CPLMalloc(sizeof(int) * width * height);
+    cudaDeviceSynchronize();
     cudaMemcpy(flowDirData, d_flowDirData, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
 
     // Write flow direction data to the output dataset
