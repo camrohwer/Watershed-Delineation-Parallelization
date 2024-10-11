@@ -7,6 +7,7 @@
 const int FLOW_NODATA = -1;
 
 __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int height) {
+    //unique thread index
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -53,19 +54,23 @@ __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int he
                 }
             }
             //printf("%d\n",dir);
-            flow_dir[idx] = dir;
+            if (dir != FLOW_NODATA){
+                flow_dir[idx] = dir;
+            }
         }
     }
 }
 
 int main(int argc, char* argv[]) {
+    //checks for input file passed as arg
     if (argc != 2){
         std::cout << "Please provide a filepath for input raster" << std::endl;
         return -1;
     }
+    // register drivers to open raster data
     GDALAllRegister();
     
-    // Open DEM
+    // Open DEM dataset
     const char* input = argv[1];
     GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
 
@@ -73,18 +78,23 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error opening DEM file." << std::endl;
         return -1;
     }
+
     //create output raster for flow direction
-    const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif";
+    const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif"; //TODO should fix abs paths
+    //Geotiff Driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    //32int Empty raster with same dims as input
     GDALDataset *flowDirDataset = poDriver->Create(outputFilename,
                                                     demDataset->GetRasterXSize(),
                                                     demDataset->GetRasterYSize(),
                                                     1, GDT_Int32, NULL);
 
+    //Raster size to use with Malloc and device mem
     int width = demDataset->GetRasterXSize();
     int height = demDataset->GetRasterYSize();
     float *demData = (float *)CPLMalloc(sizeof(float) * width * height);
 
+    //populate demData dynamically allocated memory
     CPLErr err = demDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, demData, width, height, GDT_Float32, 0, 0);
     if (err != CE_None){
         std::cerr << "Error reading DEM data: " << CPLGetLastErrorMsg() << std::endl;
@@ -105,7 +115,7 @@ int main(int argc, char* argv[]) {
     }
 
     //define grid and block size
-    dim3 blockSize(16,16);
+    dim3 blockSize(16,16); //TODO experiment with block sizes to see if runtime could be faster
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
     // Launch the CUDA kernel
