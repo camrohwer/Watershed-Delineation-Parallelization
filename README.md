@@ -22,3 +22,5 @@ cmake --build . --target flow_direction_iterative
 
 cmake --build . --target flow_direction_parallel  
 ./flow_direction_parallel ../../DEMs/cdem_dem_092G.tif  
+
+python scripts/compare_runtimes.py 

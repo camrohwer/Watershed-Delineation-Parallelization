@@ -1,0 +1,9 @@
+{
+  "name": "GPU-enabled container",
+  "build": {
+    "dockerfile": "../Dockerfile",         // Path to your existing Dockerfile
+    "context": "."                      // The build context (current directory)
+  },
+  "runArgs": ["--gpus", "all"],         // Enable GPU support when the container runs
+  "postCreateCommand": "nvidia-smi"     // Optional: Check GPU inside the container after it starts
+}
