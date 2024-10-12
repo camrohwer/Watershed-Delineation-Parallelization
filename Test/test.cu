@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 
 __global__ void hello_from_gpu(){
-    printf("Hellow World! ");
+    printf("Hellow World!\n");
 }
 
 int main() {
