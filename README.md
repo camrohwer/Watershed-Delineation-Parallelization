@@ -1,7 +1,6 @@
 # Watershed Delineation Project
 
 This project implements watershed delineation algorithms using both iterative and parallel approaches using C++ and CUDA respectively. The goal is to efficiently process Digital Elevation Models (DEMs) to perform watershed Delineation.
-nvidia-smi to check CUDA version  
 
 ## Table of Contents
 
