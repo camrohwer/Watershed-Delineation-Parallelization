@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 
+// https://ftp.maps.canada.ca/pub/nrcan_rncan/vector/index/index_pdf/NTS-SNRC_Index%205_British_Columbia_300dpi.pdf
 //raster from https://ftp.maps.canada.ca/pub/nrcan_rncan/elevation/cdem_mnec/
 
 const int FLOW_NODATA = -1;
@@ -95,8 +96,8 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
 
 int main(int argc, const char* argv[]) {
     //check that input file is passed as arg
-    if (argc != 2){
-        std::cout << "Please provide a filepath for input raster" << std::endl;
+    if (argc != 3){
+        std::cout << "Please provide filepaths for input and output raster" << std::endl;
         return -1;
     }
     // Register all drivers to be able to open Raster data
@@ -113,7 +114,7 @@ int main(int argc, const char* argv[]) {
     }
 
     //create output raster for flow direction
-    const char *outputFilename = "../../DEMs/Output/iterative_flow_direction.tif"; //TODO fix abs paths
+    const char *outputFilename = argv[2];
     //Get Geotiff driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     //Create 32Int empty raster with same dimensions as input

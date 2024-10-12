@@ -56,8 +56,8 @@ __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int he
 
 int main(int argc, char* argv[]) {
     //checks for input file passed as arg
-    if (argc < 2){
-        std::cout << "Please provide a filepath for input raster" << std::endl;
+    if (argc < 3){
+        std::cout << "Please provide a filepath for input and output raster" << std::endl;
         return -1;
     }
     // register drivers to open raster data
@@ -73,7 +73,8 @@ int main(int argc, char* argv[]) {
     }
 
     //create output raster for flow direction
-    const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif"; //TODO should fix abs paths
+    const char *outputFilename = argv[2];
+    //const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif"; //TODO should fix abs paths
     //Geotiff Driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     //32int Empty raster with same dims as input
@@ -119,8 +120,8 @@ int main(int argc, char* argv[]) {
     }
 
     /* 
-    int dim_x = std::atoi(argv[2]);
-    int dim_y = std::atoi(argv[3]);
+    int dim_x = std::atoi(argv[3]);
+    int dim_y = std::atoi(argv[4]);
     dim3 blockSize(dim_x,dim_y);
     */
 
