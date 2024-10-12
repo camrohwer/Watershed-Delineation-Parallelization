@@ -34,15 +34,13 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
 
      // Initialize flow direction data
     for (int i = 0; i < width * height; ++i) {
-        flowDirData[i] = FLOW_NODATA;  // Initialize with nodata value
+        flowDirData[i] = 0;  // Initialize with no flow
     }
 
     // Calculate flow direction
     for (int y = 1; y < height - 1; ++y) {
         for (int x = 1; x < width - 1; ++x) {
             float center = demData[y * width + x];
-            //if center pixel is invalid we dont need to check neightbours
-            if (center == FLOW_NODATA) continue;
             // Check neighbors
             float lowest = center;
             int dir = FLOW_NODATA;
@@ -57,7 +55,7 @@ void calculateFlowDirection(GDALDataset *demDataset, GDALDataset *flowDirDataset
                     if (isValidNeighbor(neighborX, neighborY, width, height)){
                         float neighbor = demData[(y + dy) * width + (x + dx)];
 
-                        if (neighbor < lowest && neighbor != FLOW_NODATA) {
+                        if (neighbor < lowest) {
                             lowest = neighbor;
                             // Determine the direction based on the neighbor's position
                             if (dy == -1 && dx == -1) dir = 1;  // North-West

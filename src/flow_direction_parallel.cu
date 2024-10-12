@@ -18,14 +18,8 @@ __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int he
     }
     
     float centre = dem[idx]; //get dem value at current pixel
-    if (centre == FLOW_NODATA){
-        flow_dir[idx] = FLOW_NODATA;
-        return;
-    }
-
     float lowest = centre;
     int dir = FLOW_NODATA;
-    flow_dir[idx] = FLOW_NODATA;
 
     for (int dy = -1; dy <= 1; dy++){
         for (int dx = -1; dx <= 1; dx++){
@@ -39,7 +33,7 @@ __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int he
             if (nx >= 0 && nx < width && ny >= 0 && ny < height){
                 float n = dem[ny * width + nx]; //get neighbours value
 
-                if (n < lowest && n != FLOW_NODATA){
+                if (n < lowest){
                     lowest = n;
                     // Determine the direction based on the neighbor's position
                     if (dy == -1 && dx == -1) dir = 1;  // North-West
