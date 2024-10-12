@@ -19,11 +19,13 @@ if not os.path.exists("./flow_direction_parallel"):
     print("Executable not found!")
     exit(1)
 
-block_sizes = [(4,4) ,(8, 8), (16, 16), (32, 32), (16, 32), (32, 16)]
+block_sizes = [(2**i, 2**i) for i in range(1,6)]
+num_runs = 25
+print(f"Number of Runs {num_runs}")
 
 for dim_x, dim_y in block_sizes:
     parallel = ['./flow_direction_parallel', '../../DEMs/cdem_dem_092G.tif', str(dim_x), str(dim_y)]
-    num_runs = 5
+    
     runtimes = []
     for _ in range(num_runs):
         time1, output1, error1 = run_executable(parallel)
