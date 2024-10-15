@@ -7,15 +7,42 @@
 #include <queue>
 #include <vector>
 #include <limits.h>
+#include <float.h>
 
 struct PitCell {
     float elevation;
     int index;
 };
 
+__global__ void pitFilling(PitCell* pits, int numPits, const float* dem, const int width, const int height, const float hc){
+    int idx = y * width + x;
+    PitCell pit = pits[idx];
+
+    float lowestNeighbour = FLT_MAX;
+    
+    for (int dy = -1; dy <= 1; dy++){
+        for (int dx = -1; dx <= 1; dx++){
+            if (dx == 0 && dy == 0) continue; //skip current pixel
+
+            int nx = x + dx;
+            int ny = y + dy;
+
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height){
+                float n = dem[ny * width + nx];
+
+                if (n < lowestNeighbour) {
+                    lowestNeighbour = n;
+                }
+            }
+        }
+    }
+    if (lowestNeighbour != FLT_MAX) {
+        pits[idx].elevation = lowestNeighbour + 0.0001f;
+    }
+}
 __global__ void identifyPits(const float* dem, PitCell* pitCells, int* numPits, int width, int height){
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockidx.x * blockdim.x + threadidx.x;
+    int y = blockidx.y * blockdim.y + threadidx.y;
 
     if (x <= 1 || x >= width || y <= 1 || y >= height) return; // skip boundary 
 
@@ -145,5 +172,10 @@ int main(int argc, char* argv[]){
         j++;
         pq.pop();
     }
+
     std::cout << "Size of PQ: " << j <<std::endl;
+    int cell_count = width * height;
+    std::cout << "Total Cells: " << cell_count << std::endl;
+    float pit_count =  static_cast<float>(j);
+    std::cout << "Pit Rate: " << (pit_count / cell_count) * 100 << "%" << std::endl;
 }

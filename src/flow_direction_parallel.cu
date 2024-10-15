@@ -13,9 +13,7 @@ __global__ void flowDirectionKernel(float* dem, int* flow_dir, int width, int he
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     int idx = y * width + x;
 
-    if (x < 1 || x >= width || y < 1 || y >= height - 1) {
-        return; //skip boundary pixels
-    }
+    if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) return; //skip boundary 
     
     float centre = dem[idx]; //get dem value at current pixel
     float lowest = centre;
@@ -99,13 +97,11 @@ int main(int argc, char* argv[]) {
     float *d_demData;
     int *d_flowDirData;
 
-    cudaMalloc(&d_demData, sizeof(float) * width * height);
     if (cudaMalloc(&d_demData, sizeof(float) * width * height) != cudaSuccess) {
         std::cerr << "Error allocating memory for DEM on device." << std::endl;
         return -1;
     }
 
-    cudaMalloc(&d_flowDirData, sizeof(int) * width * height);
     if (cudaMalloc(&d_flowDirData, sizeof(int) * width * height) != cudaSuccess) {
         std::cerr << "Error allocating memory for flow direction on device." << std::endl;
         cudaFree(d_demData); // Free already allocated memory
@@ -119,15 +115,14 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    dim3 blockSize(8,8);
-    if(argv[3] && argv[4]) {
-        int dim_x = std::atoi(argv[3]);
-        int dim_y = std::atoi(argv[4]);
-        dim3 blockSize(dim_x,dim_y);
-    }
-    
+    /* 
+    int dim_x = std::atoi(argv[3]);
+    int dim_y = std::atoi(argv[4]);
+    dim3 blockSize(dim_x,dim_y);
+    */
 
     //define grid and block size
+    dim3 blockSize(8,8);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
     // Launch the CUDA kernel
