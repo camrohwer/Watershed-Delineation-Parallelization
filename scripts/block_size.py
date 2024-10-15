@@ -20,7 +20,7 @@ if not os.path.exists("./flow_direction_parallel"):
     exit(1)
 
 block_sizes = [(2**i, 2**i) for i in range(1,6)]
-num_runs = 25
+num_runs = 5
 print(f"Number of Runs {num_runs}")
 
 for dim_x, dim_y in block_sizes:
