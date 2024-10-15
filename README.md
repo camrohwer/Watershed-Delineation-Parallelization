@@ -80,14 +80,9 @@ cd build
 cmake ..
 ```
 
-5. Build the target for the iterative algorithm:
+5. Build executables:
 ```bash
-cmake --build . --target flow_direction_iterative  
-```
-
-6. Build the target for the parallel algorithm:
-```bash
-cmake --build . --target flow_direction_parallel  
+make
 ```
 
 ## Running the Algorithms

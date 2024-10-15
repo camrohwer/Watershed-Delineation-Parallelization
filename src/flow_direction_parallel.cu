@@ -119,14 +119,15 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    /* 
-    int dim_x = std::atoi(argv[3]);
-    int dim_y = std::atoi(argv[4]);
-    dim3 blockSize(dim_x,dim_y);
-    */
+    dim3 blockSize(8,8);
+    if(argv[3] && argv[4]) {
+        int dim_x = std::atoi(argv[3]);
+        int dim_y = std::atoi(argv[4]);
+        dim3 blockSize(dim_x,dim_y);
+    }
+    
 
     //define grid and block size
-    dim3 blockSize(8,8);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
     // Launch the CUDA kernel

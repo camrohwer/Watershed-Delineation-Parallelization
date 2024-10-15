@@ -44,11 +44,11 @@ target_link_libraries(pit_filling PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 # GTX1650 Ti 75
 
 target_compile_options(flow_direction_parallel PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_35,code=sm_35>
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_75,code=sm_75>
     $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
 )
 
 target_compile_options(pit_filling PRIVATE
-    $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_35,code=sm_35>
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_75,code=sm_75>
     $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
 )
