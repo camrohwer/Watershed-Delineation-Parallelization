@@ -31,6 +31,11 @@ RUN conda init bash
 RUN conda create -n myenv python=3.10 gdal=3.7.1 numpy -c conda-forge && \
     conda clean -afy
 
+# Set CUDA environment variables
+ENV CUDA_HOME="/usr/local/cuda-11.4"
+ENV PATH="/usr/local/cuda-11.4/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda-11.4/lib64:${LD_LIBRARY_PATH}"
+
 # Set working directory
 WORKDIR /workspace
 

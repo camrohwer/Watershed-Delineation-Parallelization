@@ -21,31 +21,34 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Add include directories for GDAL
 include_directories(${GDAL_INCLUDE_DIRS})
 
-# Define the source files for C++ (iterative version)
-set(ITERATIVE_SOURCES
-    src/flow_direction_iterative.cpp
-)
-
-# Define the source files for CUDA (parallel version)
-set(PARALLEL_SOURCES
-    src/flow_direction_parallel.cu
-)
-
 # Create an executable for the iterative (C++) version
-add_executable(flow_direction_iterative ${ITERATIVE_SOURCES})
+add_executable(flow_direction_iterative src/flow_direction_iterative.cpp)
 
 # Link the GDAL library to the C++ iterative executable
 target_link_libraries(flow_direction_iterative PRIVATE ${GDAL_LIBRARIES})
 
 # Create an executable for the parallel (CUDA) version
-add_executable(flow_direction_parallel ${PARALLEL_SOURCES})
+add_executable(flow_direction_parallel src/flow_direction_parallel.cu)
 
 # Link the GDAL library to the CUDA parallel executable
 target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
-# Set CUDA architecture flags for the parallel executable
-#GTX780 35
-#GTX1650 Ti 75
+# Create an executable for the pit filling CUDA version
+add_executable(pit_filling src/pit_filling.cu)
+
+# Link the GDAL library to the pit filling executable
+target_link_libraries(pit_filling PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+
+# Set CUDA architecture flags for the parallel executables
+# GTX780 35
+# GTX1650 Ti 75
+
 target_compile_options(flow_direction_parallel PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_35,code=sm_35>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
+)
+
+target_compile_options(pit_filling PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_35,code=sm_35>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
 )
