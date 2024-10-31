@@ -9,6 +9,8 @@
 #include <limits.h>
 #include <float.h>
 
+#define BLOCK_DIM_X 8
+#define BLOCK_DIM_Y 8
 // ./pit_filling ../../DEMs/092F.tif ../../DEMs/Output/092F_filled.tif
 struct PitCell {
     float elevation;
@@ -50,37 +52,59 @@ __global__ void identifyPits(const float* dem, PitCell* pitCells, int* numPits, 
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (x <= 1 || x >= width || y <= 1 || y >= height) return; // skip boundary 
 
-    int idx = y * width + x;
-    float curElev = dem[idx];
+    if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return; // skip boundary 
 
+     __shared__ float sharedDem[BLOCK_DIM_Y + 2][BLOCK_DIM_X + 2];
+
+    int tx = threadIdx.x + 1;
+    int ty = threadIdx.y + 1;
+
+    
+    if (x < width && y < height){
+        sharedDem[ty][tx] = dem[y * width + x];
+
+        //left padding 
+        if (threadIdx.x == 0 && x > 0){
+            sharedDem[ty][0] = dem[y * width + (x - 1)];
+        }
+
+        //right padding
+        if (threadIdx.x == blockDim.x - 1 && x < width - 1) {
+            sharedDem[ty][tx + 1] = dem[y * width + (x + 1)];
+        }
+
+        //top padding
+        if (threadIdx.y == 0 && y > 0){ 
+            sharedDem[0][tx] = dem[(y - 1) * width + x];
+        }
+
+        //bottom padding
+        if (threadIdx.y == blockDim.y - 1 && y < height - 1){
+            sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
+        }
+    }
+    __syncthreads();
+
+    float curElev = sharedDem[ty][tx];
     bool isPit = true;
 
-    for (int dy = -1; dy <= 1; dy++){
-        for (int dx = -1; dx <= 1; dx++){
-            if (dx == 0 && dy == 0) continue; //skip current pixel
+    const int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
+    const int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
 
-            int nx = x + dx;
-            int ny = y + dy;
+    for (int i = 0; i < 8; i++){
+        float neigbourElev = sharedDem[ty + offsetY[i]][tx + offsetX[i]];
 
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height){
-                //get neightbour index
-                int ni = ny * width + nx;
-                if (dem[ni] <= curElev){
-                    isPit = false;
-                    break;
-                }
-            }
+        if (neigbourElev <= curElev){
+            isPit = false;
+            break;
         }
-        if (!isPit) break;
     }
-
     // if pit, store elev
     if (isPit){
         int count = atomicAdd(numPits, 1);
         pitCells[count].elevation = curElev;
-        pitCells[count].index = idx;
+        pitCells[count].index = y * width + x;
     }
 }
 int main(int argc, char* argv[]){
@@ -164,7 +188,7 @@ int main(int argc, char* argv[]){
     cudaMemcpy(d_numPits, &numPits, sizeof(int), cudaMemcpyHostToDevice);
 
     //define grid and block size
-    dim3 blockSize(8,8);
+    dim3 blockSize(BLOCK_DIM_X,BLOCK_DIM_Y);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
     identifyPits<<<gridSize, blockSize>>>(d_dem, d_pitCells, d_numPits, width, height);
     cudaDeviceSynchronize();
