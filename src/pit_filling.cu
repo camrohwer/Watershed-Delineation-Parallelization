@@ -9,15 +9,20 @@
 #include <limits.h>
 #include <float.h>
 
+// ./pit_filling ../../DEMs/092F.tif ../../DEMs/Output/092F_filled.tif
 struct PitCell {
     float elevation;
     int index;
 };
 
-__global__ void pitFilling(PitCell* pits, int numPits, const float* dem, const int width, const int height, const float hc){
+__global__ void pitFilling(PitCell* pits, int numPits, float* dem, const int width, const int height, const float hc){
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
     int idx = y * width + x;
-    PitCell pit = pits[idx];
 
+    if (idx >= numPits) return;
+
+    PitCell pit = pits[idx];
     float lowestNeighbour = FLT_MAX;
     
     for (int dy = -1; dy <= 1; dy++){
@@ -37,12 +42,12 @@ __global__ void pitFilling(PitCell* pits, int numPits, const float* dem, const i
         }
     }
     if (lowestNeighbour != FLT_MAX) {
-        pits[idx].elevation = lowestNeighbour + 0.0001f;
+        dem[pit.index] = lowestNeighbour + hc;
     }
 }
 __global__ void identifyPits(const float* dem, PitCell* pitCells, int* numPits, int width, int height){
-    int x = blockidx.x * blockdim.x + threadidx.x;
-    int y = blockidx.y * blockdim.y + threadidx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x <= 1 || x >= width || y <= 1 || y >= height) return; // skip boundary 
 
@@ -78,8 +83,8 @@ __global__ void identifyPits(const float* dem, PitCell* pitCells, int* numPits, 
     }
 }
 int main(int argc, char* argv[]){
-    if (argc < 2){
-        std::cout << "Please provide a filepath for input" << std::endl;
+    if (argc < 3){
+        std::cout << "Please provide a filepath for input and output raster" << std::endl;
         return -1;
     }
 
@@ -90,10 +95,20 @@ int main(int argc, char* argv[]){
     const char* input = argv[1];
     GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
 
-    if (demDataset == NULL) {
-        std::cerr << "Error opening DEM file." << std::endl;
+    if (demDataset == NULL){
+        std::cerr << "Error opening DEM file" << std::endl;
         return -1;
     }
+
+    //create output raster for flow direction
+    const char *outputFilename = argv[2];
+    //Geotiff Driver
+    GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    //32int Empty raster with same dims as input
+    GDALDataset *pitFillingDataset = poDriver->Create(outputFilename,
+                                                    demDataset->GetRasterXSize(),
+                                                    demDataset->GetRasterYSize(),
+                                                    1, GDT_Int32, NULL);
 
     //Raster size to use with Malloc and device mem
     int width = demDataset->GetRasterXSize();
@@ -139,7 +154,6 @@ int main(int argc, char* argv[]){
     //define grid and block size
     dim3 blockSize(8,8);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
-
     identifyPits<<<gridSize, blockSize>>>(d_dem, d_pitCells, d_numPits, width, height);
     cudaDeviceSynchronize();
 
@@ -152,30 +166,38 @@ int main(int argc, char* argv[]){
     // copy pit count from device to host
     cudaMemcpy(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost);
 
-    std::vector<PitCell> hostPits(numPits);
-    cudaMemcpy(hostPits.data(), d_pitCells, numPits * sizeof(PitCell), cudaMemcpyDeviceToHost);
+    if (numPits > 0){
+        std::cout << "Number of pits to be filled: " << numPits << std::endl;
+
+
+        pitFilling<<<(numPits + 255) / 256, 256>>>(d_pitCells, numPits, d_dem, width, height, 0.0001f);
+        cudaDeviceSynchronize();
+
+        cudaError_t fillKernelErr = cudaGetLastError();
+        if (fillKernelErr != cudaSuccess){
+            std::cerr << "Pit Filling Kernel Failed: " << cudaGetErrorString(fillKernelErr) << std::endl;
+            return -1;
+        }
+    }
+
+    cudaMemcpy(demData, d_dem, sizeof(float) * width * height, cudaMemcpyDeviceToHost);
+
+    // Write pit filling data to the output dataset
+    err = pitFillingDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
+                                                    demData, width, height, GDT_Int32, 0, 0);
+
+    if (err != CE_None) {
+        std::cerr << "Error writing pit filling data: " << CPLGetLastErrorMsg() << std::endl;
+        return -1;
+    }
 
     cudaFree(d_dem);
     cudaFree(d_pitCells);
     cudaFree(d_numPits);
+    CPLFree(demData);
+    GDALClose(demDataset);
+    GDALClose(pitFillingDataset);
 
-    //place pits in PQ
-    std::priority_queue<int> pq;
-    for (const auto& pit : hostPits){
-        pq.push(pit.elevation);
-    }
-
-    //OUPUT FOR TESTING
-    int j = 0;
-    std::cout << "Pits sorted by elevation" << std::endl;
-    while(!pq.empty()){
-        j++;
-        pq.pop();
-    }
-
-    std::cout << "Size of PQ: " << j <<std::endl;
-    int cell_count = width * height;
-    std::cout << "Total Cells: " << cell_count << std::endl;
-    float pit_count =  static_cast<float>(j);
-    std::cout << "Pit Rate: " << (pit_count / cell_count) * 100 << "%" << std::endl;
+    std::cout << "Pit filling completed and output written to " << outputFilename << std::endl;
+    return 0;
 }

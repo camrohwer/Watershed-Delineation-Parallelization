@@ -72,7 +72,6 @@ int main(int argc, char* argv[]) {
 
     //create output raster for flow direction
     const char *outputFilename = argv[2];
-    //const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif"; //TODO should fix abs paths
     //Geotiff Driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     //32int Empty raster with same dims as input
@@ -115,18 +114,14 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    /* 
-    int dim_x = std::atoi(argv[3]);
-    int dim_y = std::atoi(argv[4]);
-    dim3 blockSize(dim_x,dim_y);
-    */
-
     //define grid and block size
     dim3 blockSize(8,8);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
     // Launch the CUDA kernel
     flowDirectionKernel<<<gridSize, blockSize>>>(d_demData, d_flowDirData, width, height);
+    cudaDeviceSynchronize();
+
     cudaError_t kernel_err = cudaGetLastError();
     if (kernel_err != cudaSuccess){
         std::cerr << "Cuda kernel launch error: " << cudaGetErrorString(kernel_err) << std::endl;
