@@ -16,13 +16,14 @@ struct PitCell {
 };
 
 __global__ void pitFilling(PitCell* pits, int numPits, float* dem, const int width, const int height, const float hc){
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int idx = y * width + x;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx >= numPits) return;
 
     PitCell pit = pits[idx];
+    int x = pit.index % width;
+    int y = pit.index / width;
+
     float lowestNeighbour = FLT_MAX;
     
     for (int dy = -1; dy <= 1; dy++){
@@ -95,12 +96,21 @@ int main(int argc, char* argv[]){
     const char* input = argv[1];
     GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
 
-    if (demDataset == NULL){
+    if (demDataset == nullptr){
         std::cerr << "Error opening DEM file" << std::endl;
         return -1;
     }
 
-    //create output raster for flow direction
+    const char* projection = demDataset->GetProjectionRef();
+    double geoTransform[6];
+
+    if (demDataset->GetGeoTransform(geoTransform) != CE_None){
+        std::cerr << "Error reading geo-transform" << std::endl;
+        GDALClose(demDataset);
+        return -1;
+    }
+
+    //create output raster for pit filling
     const char *outputFilename = argv[2];
     //Geotiff Driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
@@ -108,7 +118,10 @@ int main(int argc, char* argv[]){
     GDALDataset *pitFillingDataset = poDriver->Create(outputFilename,
                                                     demDataset->GetRasterXSize(),
                                                     demDataset->GetRasterYSize(),
-                                                    1, GDT_Int32, NULL);
+                                                    1, GDT_Float32, NULL);
+
+    pitFillingDataset->SetProjection(projection);
+    pitFillingDataset->SetGeoTransform(geoTransform);
 
     //Raster size to use with Malloc and device mem
     int width = demDataset->GetRasterXSize();
@@ -147,7 +160,6 @@ int main(int argc, char* argv[]){
 
     int* d_numPits;
     int numPits = 0;
-
     cudaMalloc(&d_numPits, sizeof(int));
     cudaMemcpy(d_numPits, &numPits, sizeof(int), cudaMemcpyHostToDevice);
 
@@ -169,7 +181,6 @@ int main(int argc, char* argv[]){
     if (numPits > 0){
         std::cout << "Number of pits to be filled: " << numPits << std::endl;
 
-
         pitFilling<<<(numPits + 255) / 256, 256>>>(d_pitCells, numPits, d_dem, width, height, 0.0001f);
         cudaDeviceSynchronize();
 
@@ -183,9 +194,7 @@ int main(int argc, char* argv[]){
     cudaMemcpy(demData, d_dem, sizeof(float) * width * height, cudaMemcpyDeviceToHost);
 
     // Write pit filling data to the output dataset
-    err = pitFillingDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
-                                                    demData, width, height, GDT_Int32, 0, 0);
-
+    err = pitFillingDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, demData, width, height, GDT_Float32, 0, 0);
     if (err != CE_None) {
         std::cerr << "Error writing pit filling data: " << CPLGetLastErrorMsg() << std::endl;
         return -1;
