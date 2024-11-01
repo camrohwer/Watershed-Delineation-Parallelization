@@ -4,8 +4,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <queue>
-#include <vector>
 #include <limits.h>
 #include <float.h>
 
@@ -13,7 +11,6 @@
 #define BLOCK_DIM_Y 8
 #define HEIGHT_CONST 0.1f
 
-// ./pit_filling ../../DEMs/092F.tif ../../DEMs/Output/092F_filled.tif
 __global__ void identifyAndFillPits(float* dem, int* numPits, int width, int height, float hc){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -127,41 +124,33 @@ int main(int argc, char* argv[]){
         return -1;
     }
 
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
     //allocating device mem
     float *d_dem;
-
-    if (cudaMalloc(&d_dem, sizeof(float) * width * height) != cudaSuccess) {
-        std::cerr << "Error allocating memory for DEM on device." << std::endl;
-        return -1;
-    }
-
-    //copy DEM data to device
-    cudaError_t memcpy_err = cudaMemcpy(d_dem, demData, sizeof(float) * width * height, cudaMemcpyHostToDevice);
-    if (memcpy_err != cudaSuccess){
-        std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err) << std::endl;
-        return -1;
-    }
+    cudaMalloc(&d_dem, sizeof(float) * width * height);
 
     int* d_numPits;
-    int numPits = 0;
     cudaMalloc(&d_numPits, sizeof(int));
     cudaMemset(d_numPits, 0, sizeof(int));
+
+    int numPits = 0;
+    
+    //copy DEM data to device
+    cudaMemcpyAsync(d_dem, demData, sizeof(float) * width * height, cudaMemcpyHostToDevice, stream);
 
     //define grid and block size
     dim3 blockSize(BLOCK_DIM_X,BLOCK_DIM_Y);
     dim3 gridSize((width + BLOCK_DIM_X - 1) / BLOCK_DIM_X, (height + BLOCK_DIM_Y - 1) / BLOCK_DIM_Y);
 
-    identifyAndFillPits<<<gridSize, blockSize>>>(d_dem, d_numPits, width, height, HEIGHT_CONST);
-    cudaError_t kernel_err = cudaGetLastError();
-    if (kernel_err != cudaSuccess){
-        std::cerr << "Kernel Launch failed: " << cudaGetErrorString(kernel_err) << std::endl;
-        return -1;
-    }
-    cudaDeviceSynchronize();
+    identifyAndFillPits<<<gridSize, blockSize, 0, stream>>>(d_dem, d_numPits, width, height, HEIGHT_CONST);
 
     // copy pit count from device to host
-    cudaMemcpy(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(demData, d_dem, sizeof(float) * width * height, cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(demData, d_dem, sizeof(float) * width * height, cudaMemcpyDeviceToHost, stream);
+
+    cudaStreamSynchronize(stream);
 
     // Write pit filling data to the output dataset
     err = pitFillingDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, demData, width, height, GDT_Float32, 0, 0);
@@ -175,6 +164,7 @@ int main(int argc, char* argv[]){
     CPLFree(demData);
     GDALClose(demDataset);
     GDALClose(pitFillingDataset);
+    cudaStreamDestroy(stream);
 
     std::cout << "Number of pits filled: " << numPits << std::endl;
     std::cout << "Pit filling completed and output written to " << outputFilename << std::endl;
