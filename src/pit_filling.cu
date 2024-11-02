@@ -1,15 +1,15 @@
 #include <iostream>
 #include <gdal_priv.h>
 #include <cuda_runtime.h>
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <limits.h>
 #include <float.h>
 
 #define BLOCK_DIM_X 8
 #define BLOCK_DIM_Y 8
 #define HEIGHT_CONST 0.1f
+
+//loop offsets for checking neighbours
+__constant__ int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
+__constant__ int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
 
 __global__ void identifyAndFillPits(float* dem, int* numPits, int width, int height, float hc){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -23,35 +23,30 @@ __global__ void identifyAndFillPits(float* dem, int* numPits, int width, int hei
     int tx = threadIdx.x + 1;
     int ty = threadIdx.y + 1;
 
-    
-    if (x < width && y < height){
-        sharedDem[ty][tx] = dem[y * width + x];
+    //load shared dem values 
+    sharedDem[ty][tx] = dem[y * width + x];
 
-        //left padding 
-        if (threadIdx.x == 0 && x > 0){
-            sharedDem[ty][0] = dem[y * width + (x - 1)];
-        }
-        //right padding
-        if (threadIdx.x == blockDim.x - 1 && x < width - 1) {
-            sharedDem[ty][tx + 1] = dem[y * width + (x + 1)];
-        }
-        //top padding
-        if (threadIdx.y == 0 && y > 0){ 
-            sharedDem[0][tx] = dem[(y - 1) * width + x];
-        }
-        //bottom padding
-        if (threadIdx.y == blockDim.y - 1 && y < height - 1){
-            sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
-        }
+    //left padding 
+    if (threadIdx.x == 0 && x > 0){
+        sharedDem[ty][0] = dem[y * width + (x - 1)];
+    }
+    //right padding
+    if (threadIdx.x == blockDim.x - 1 && x < width - 1) {
+        sharedDem[ty][tx + 1] = dem[y * width + (x + 1)];
+    }
+    //top padding
+    if (threadIdx.y == 0 && y > 0){ 
+        sharedDem[0][tx] = dem[(y - 1) * width + x];
+    }
+    //bottom padding
+    if (threadIdx.y == blockDim.y - 1 && y < height - 1){
+        sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
     }
     __syncthreads();
 
     float curElev = static_cast<float>(sharedDem[ty][tx]);
     bool isPit = true;
     float lowestNeighbour = FLT_MAX;
-
-    const int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
-    const int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
 
     for (int i = 0; i < 8; i++){
         int neighbourElev = sharedDem[ty + offsetY[i]][tx + offsetX[i]];
@@ -65,12 +60,24 @@ __global__ void identifyAndFillPits(float* dem, int* numPits, int width, int hei
             }
         }
     }
-    // if pit, store elev
+
+    //keep count of pits in local variable, and only have first thread perform atomic to update global count.
+    //reduces atomics to global
+    __shared__ int localPits;
+    if (threadIdx.x == 0 && threadIdx.y == 0) localPits = 0;
+    __syncthreads();
+
     if (isPit){
-        int count = atomicAdd(numPits, 1);
+        atomicAdd(&localPits, 1);
         dem[y * width + x] = static_cast<float>(lowestNeighbour) + hc;
     }
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0){
+        atomicAdd(numPits, localPits);
+    }
 }
+
 int main(int argc, char* argv[]){
     if (argc < 3){
         std::cout << "Please provide a filepath for input and output raster" << std::endl;
