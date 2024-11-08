@@ -9,7 +9,7 @@
 
 __global__ void flowAccumKernel(int* gpuOldFlow, int* gpuNewFlow, int * flowDir, bool* gpuStop, int N, int M){
     //__shared__ int sharedOldFlow[BLOCK_SIZE][BLOCK_SIZE];
-    *gpuStop = false;
+    //*gpuStop = false;
     int x = blockIdx.x * blockDim.x + threadIdx.x; 
     int y = blockIdx.y * blockDim.x + threadIdx.y;
     
@@ -22,6 +22,7 @@ __global__ void flowAccumKernel(int* gpuOldFlow, int* gpuNewFlow, int * flowDir,
     //__syncthreads();
 
     int flow = gpuOldFlow[y* M + x];
+    //printf("(%d, %d) - %d  ",x,y, flow);
     if (flow <= 0 || flowDir[idx] == 0) return;
     if (flow > 0){
         gpuOldFlow[y* M + x] = 0;
@@ -59,6 +60,7 @@ __global__ void flowAccumKernel(int* gpuOldFlow, int* gpuNewFlow, int * flowDir,
                 targetX -=1;
                 break;
         }
+        //printf("--%d, %d--", targetX, targetY);
 
         if (targetX >= 0 && targetX < M && targetY >= 0 && targetY < N){
             atomicAdd(&gpuNewFlow[targetY * M + targetX], flow);
@@ -131,8 +133,12 @@ int main(int argc, char* argv[]){
         std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err_flowDir) << std::endl;
         return -1;
     }
+    int* hostOldFlow = new int[width * height];
+    for (int i = 0; i < width * height; ++i) {
+        hostOldFlow[i] = 1;
+    }
 
-    cudaMemset(d_oldFlow, 1, sizeof(int) * width *height);
+    cudaMemcpy(d_oldFlow, hostOldFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemset(d_newFlow, 0, sizeof(int) * width *height);
     //define grid and block size
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
