@@ -26,7 +26,7 @@ __global__ void flowDirectionKernel(int* dem, int* flow_dir, int width, int heig
     int ty = threadIdx.y + 1;
 
     if (x < width && y < height){
-           sharedDem[ty][tx] = dem[y * width + x];
+        sharedDem[ty][tx] = dem[y * width + x];
 
         //left padding 
         if (threadIdx.x == 0 && x > 0){
@@ -170,6 +170,5 @@ int main(int argc, char* argv[]) {
     GDALClose(flowDirDataset);
 
     std::cout << "Flow direction calculated and saved to " << outputFilename << std::endl;
-
     return 0;
 }
