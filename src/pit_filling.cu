@@ -15,10 +15,9 @@ __global__ void identifyAndFillPits(float* dem, int* numPits, int width, int hei
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-
     if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return; // skip boundary 
 
-     __shared__ float sharedDem[BLOCK_DIM_Y + 2][BLOCK_DIM_X + 2];
+    __shared__ float sharedDem[BLOCK_DIM_Y + 2][BLOCK_DIM_X + 2];
 
     int tx = threadIdx.x + 1;
     int ty = threadIdx.y + 1;
