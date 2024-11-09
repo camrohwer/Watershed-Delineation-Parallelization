@@ -65,14 +65,22 @@ int main(int argc, char* argv[]) {
     const char* input = argv[1];
     GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
 
-    if (demDataset == NULL) {
+    if (demDataset == nullptr) {
         std::cerr << "Error opening DEM file." << std::endl;
+        return -1;
+    }
+
+    const char* projection = demDataset->GetProjectionRef();
+    double geoTransform[6];
+
+    if (demDataset->GetGeoTransform(geoTransform) != CE_None){
+        std::cerr << "Error reading geo-transfor" << std::endl;
+        GDALClose(demDataset);
         return -1;
     }
 
     //create output raster for flow direction
     const char *outputFilename = argv[2];
-    //const char *outputFilename = "../../DEMs/Output/parallel_flow_direction.tif"; //TODO should fix abs paths
     //Geotiff Driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     //32int Empty raster with same dims as input
@@ -80,6 +88,9 @@ int main(int argc, char* argv[]) {
                                                     demDataset->GetRasterXSize(),
                                                     demDataset->GetRasterYSize(),
                                                     1, GDT_Int32, NULL);
+
+    flowDirDataset->SetProjection(projection);
+    flowDirDataset->SetGeoTransform(geoTransform);
 
     //Raster size to use with Malloc and device mem
     int width = demDataset->GetRasterXSize();
@@ -115,18 +126,14 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    /* 
-    int dim_x = std::atoi(argv[3]);
-    int dim_y = std::atoi(argv[4]);
-    dim3 blockSize(dim_x,dim_y);
-    */
-
     //define grid and block size
     dim3 blockSize(8,8);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
     // Launch the CUDA kernel
     flowDirectionKernel<<<gridSize, blockSize>>>(d_demData, d_flowDirData, width, height);
+    cudaDeviceSynchronize();
+
     cudaError_t kernel_err = cudaGetLastError();
     if (kernel_err != cudaSuccess){
         std::cerr << "Cuda kernel launch error: " << cudaGetErrorString(kernel_err) << std::endl;
@@ -139,8 +146,7 @@ int main(int argc, char* argv[]) {
     cudaMemcpy(flowDirData, d_flowDirData, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
 
     // Write flow direction data to the output dataset
-    err = flowDirDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
-                                                     flowDirData, width, height, GDT_Int32, 0, 0);
+    err = flowDirDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, flowDirData, width, height, GDT_Int32, 0, 0);
     if (err != CE_None) {
         std::cerr << "Error writing flow direction data: " << CPLGetLastErrorMsg() << std::endl;
         return -1;
@@ -155,6 +161,5 @@ int main(int argc, char* argv[]) {
     GDALClose(flowDirDataset);
 
     std::cout << "Flow direction calculated and saved to " << outputFilename << std::endl;
-
     return 0;
 }
