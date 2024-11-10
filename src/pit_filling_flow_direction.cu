@@ -6,10 +6,10 @@
 #include <cstdlib>
 #include <float.h>
 
-#define BLOCK_DIM_X 8
-#define BLOCK_DIM_Y 8
 #define FLOW_NODATA -1
 #define HEIGHT_CONST 0.1f
+#define BLOCK_DIM_X 8
+#define BLOCK_DIM_Y 8
 
 __constant__ int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
 __constant__ int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
@@ -22,11 +22,13 @@ __global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int*
 
     if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) return; //skip boundary 
     
-    __shared__ float sharedDem[BLOCK_DIM_Y + 2][BLOCK_DIM_X + 2];
+    __shared__ float sharedDem[BLOCK_DIM_X + 2][BLOCK_DIM_Y + 2 + 1]; //extra column padding
 
+    //local indices for use with padded shared
     int tx = threadIdx.x + 1;
     int ty = threadIdx.y + 1;
 
+    //copy center pixel to shared
     sharedDem[ty][tx] = dem[y * width + x];
 
     //left padding 
@@ -45,20 +47,21 @@ __global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int*
     if (threadIdx.y == blockDim.y - 1 && y < height - 1){
         sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
     }
+    //top left corner
     if (threadIdx.x == 0 && threadIdx.y == 0 && x > 0 && y > 0) {
-    sharedDem[0][0] = dem[(y - 1) * width + (x - 1)]; // top-left corner
+    sharedDem[0][0] = dem[(y - 1) * width + (x - 1)];
     }
-
+    //top right corner
     if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0 && x < width - 1 && y > 0) {
-        sharedDem[0][tx + 1] = dem[(y - 1) * width + (x + 1)]; // top-right corner
+        sharedDem[0][tx + 1] = dem[(y - 1) * width + (x + 1)];
     }
-
+    //bottom left corner
     if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1 && x > 0 && y < height - 1) {
-        sharedDem[ty + 1][0] = dem[(y + 1) * width + (x - 1)]; // bottom-left corner
+        sharedDem[ty + 1][0] = dem[(y + 1) * width + (x - 1)];
     }
-
+    // bottom right corner
     if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1 && x < width - 1 && y < height - 1) {
-        sharedDem[ty + 1][tx + 1] = dem[(y + 1) * width + (x + 1)]; // bottom-right corner
+        sharedDem[ty + 1][tx + 1] = dem[(y + 1) * width + (x + 1)];
     }
     __syncthreads();
 
@@ -88,13 +91,14 @@ __global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int*
 
     if (isPit){
         atomicAdd(&localPits, 1);
+        //update sharedDem with pit filling step for flow direction calculation
         sharedDem[ty][tx] = lowestNeighbour + hc;
     }
+    __syncthreads();
 
     if (threadIdx.x == 0 && threadIdx.y == 0){
         atomicAdd(numPits, localPits);
     }
-    __syncthreads();
 
     for (int i = 0; i < 8; i++) {
         float neighbour = sharedDem[ty + offsetY[i]][tx + offsetX[i]];
@@ -109,12 +113,22 @@ __global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int*
     }
 }
 
+void cleanup(float* demData, int* flowDirData, float* d_demData, int* d_flowDirData, int* d_numPits) {
+    //helped function for cleaup of dynamically allocated memory
+    if (demData) CPLFree(demData);
+    if (flowDirData) CPLFree(flowDirData);
+    if (d_demData) cudaFree(d_demData);
+    if (d_flowDirData) cudaFree(d_flowDirData);
+    if (d_numPits) cudaFree(d_numPits);
+}
+
 int main(int argc, char* argv[]) {
     //checks for input file passed as arg
     if (argc < 3){
         std::cout << "Please provide a filepath for input and output raster" << std::endl;
         return -1;
     }
+
     // register drivers to open raster data
     GDALAllRegister();
     
@@ -127,11 +141,17 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    //get projection from input raster
     const char* projection = demDataset->GetProjectionRef();
+    if (projection == nullptr){
+        std::cerr << "Error: Could not retrieve projection from DEM Dataset." << std::endl;
+        GDALClose(demDataset);
+        return -1;
+    }
     double geoTransform[6];
 
     if (demDataset->GetGeoTransform(geoTransform) != CE_None){
-        std::cerr << "Error reading geo-transfor" << std::endl;
+        std::cerr << "Error reading geo-transform" << std::endl;
         GDALClose(demDataset);
         return -1;
     }
@@ -158,34 +178,42 @@ int main(int argc, char* argv[]) {
     CPLErr err = demDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, demData, width, height, GDT_Float32, 0, 0);
     if (err != CE_None){
         std::cerr << "Error reading DEM data: " << CPLGetLastErrorMsg() << std::endl;
+        cleanup(demData, nullptr, nullptr, nullptr, nullptr);
         return -1;
     }
 
     int *flowDirData = (int *)CPLMalloc(sizeof(int) * width * height);
 
+    //create cuda stream
     cudaStream_t stream;
-    cudaStreamCreate(&stream);
-
-    //allocating device mem
-    float *d_demData;
-    int *d_flowDirData;
-
-    int* d_numPits; 
-    cudaMalloc(&d_numPits, sizeof(int));
-    cudaMemset(d_numPits, 0, sizeof(int));
-
-    int numPits = 0;
-
-    if (cudaMalloc(&d_demData, sizeof(float) * width * height) != cudaSuccess) {
-        std::cerr << "Error allocating memory for DEM on device." << std::endl;
-        cudaFree(d_numPits);
+    cudaError_t stream_err =cudaStreamCreate(&stream);
+    if (stream_err != cudaSuccess){
+        std::cerr << "Error creating CUDA stream: " <<cudaGetErrorString(stream_err) << std::endl;
+        cleanup(demData, flowDirData, nullptr, nullptr, nullptr);
         return -1;
     }
 
+    int numPits = 0;
+    int* d_numPits; 
+    if (cudaMalloc(&d_numPits, sizeof(int)) != cudaSuccess){
+        std::cerr << "Error allocationg memory for Pit Count on device." << std::endl;
+        cleanup(demData, flowDirData, nullptr, nullptr, d_numPits);
+        return -1;
+    }
+    cudaMemset(d_numPits, 0, sizeof(int));
+
+    //allocating device mem
+    float *d_demData;
+    if (cudaMalloc(&d_demData, sizeof(float) * width * height) != cudaSuccess) {
+        std::cerr << "Error allocating memory for DEM on device." << std::endl;
+        cleanup(demData, flowDirData, d_demData, nullptr, d_numPits);
+        return -1;
+    }
+
+    int *d_flowDirData;
     if (cudaMalloc(&d_flowDirData, sizeof(int) * width * height) != cudaSuccess) {
         std::cerr << "Error allocating memory for flow direction on device." << std::endl;
-        cudaFree(d_demData); // Free already allocated memory
-        cudaFree(d_numPits);
+        cleanup(demData, flowDirData, d_demData, d_flowDirData, d_numPits);
         return -1;
     }
 
@@ -198,7 +226,7 @@ int main(int argc, char* argv[]) {
 
     //define grid and block size
     dim3 blockSize(BLOCK_DIM_X, BLOCK_DIM_Y);
-    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y); //dynamic grid allocation based on input size
 
     // Launch the CUDA kernel
     pitFillFlowDirectionKernel<<<gridSize, blockSize, 0, stream>>>(d_demData, d_flowDirData, d_numPits, width, height, HEIGHT_CONST);
@@ -210,8 +238,19 @@ int main(int argc, char* argv[]) {
     }
 
     // Copy flow direction data back to host
-    cudaMemcpyAsync(flowDirData, d_flowDirData, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
-    cudaMemcpyAsync(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost, stream);
+    memcpy_err = cudaMemcpyAsync(flowDirData, d_flowDirData, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
+    if (memcpy_err != cudaSuccess){
+        std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err) << std::endl;
+        return -1;
+    }
+
+    //copy numpits back to device
+    memcpy_err = cudaMemcpyAsync(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost, stream);
+    if (memcpy_err != cudaSuccess){
+        std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err) << std::endl;
+        return -1;
+    }
+
     cudaStreamSynchronize(stream);
     
     // Write flow direction data to the output dataset
@@ -222,10 +261,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
-    CPLFree(demData);
-    CPLFree(flowDirData);
-    cudaFree(d_demData);
-    cudaFree(d_flowDirData);
+    cleanup(demData, flowDirData, d_demData, d_flowDirData, d_numPits);
     GDALClose(demDataset);
     GDALClose(flowDirDataset);
 
