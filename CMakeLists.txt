@@ -30,12 +30,14 @@ target_link_libraries(flow_direction_iterative PRIVATE ${GDAL_LIBRARIES})
 # Create an executable for the parallel (CUDA) version
 add_executable(flow_direction_parallel src/flow_direction_parallel.cu)
 
+add_executable(flow_accum_2parallel src/flow_accum_2parallel.cu)
 add_executable(flow_accum_parallel src/flow_accum_parallel.cu)
 
 # Link the GDAL library to the CUDA parallel executable
 target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
 target_link_libraries(flow_accum_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+target_link_libraries(flow_accum_2parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 # Run the GPU architecture detection program and capture the output
 # Run the GPU architecture detection program and capture the output
 execute_process(

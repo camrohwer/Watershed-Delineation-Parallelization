@@ -9,7 +9,9 @@ DEMs/*
 DEMs/Output/*
 !DEMs/Output/.gitkeep
 
+profiles/*
 .vscode/
+nsight-systems-2024.6.1_2024.6.1.90-1_amd64.deb
 
 *.o
 *.exe
