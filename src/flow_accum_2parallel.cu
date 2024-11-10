@@ -6,6 +6,7 @@
 #include <cstdlib>
 #define THREADCELLS 4
 #define BLOCK_SIZE 16
+
 //two nested for loops - handle in the neighborhood sequentially
 //fourth array - takes place of the cells - used for writing final to? cumulative?
 __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, int * flowDir, bool* gpuStop, int N, int M){
@@ -15,9 +16,9 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
     //int y = blockIdx.y * blockDim.x + threadIdx.y;
     int i = THREADCELLS * (blockIdx.y * BLOCK_SIZE + threadIdx.y);
     int j = THREADCELLS * (blockIdx.x * BLOCK_SIZE + threadIdx.x);
-    if (i >= N || j >= M) return;
-    for (int r = i; r <= i + THREADCELLS; r++){
-        for (int s = j; s <= j + THREADCELLS; s++){
+    if (i >= N || j >= M || i < 0 || j < 0) return;
+    for (int r = i; r <= i + THREADCELLS && r < N && r > 0; r++){
+        for (int s = j; s <= j + THREADCELLS && r < M && r > 0; s++){
             int currFlow = gpuOldFlow[r * M + s];
             if (currFlow > 0){
                 gpuOldFlow[r * M + s] = 0;
@@ -56,6 +57,8 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
                 }
                 int k = i + targetX;
                 int l = j + targetY;
+
+                if (k >= N || l >= M || k < 0 || l < 0) return;
                 if (k >= 0 && k < N && l >= 0 && l < M) {
                     atomicAdd(&gpuNewFlow[l * M + k], currFlow);
                     atomicAdd(&gpuAccum[l * M + k], currFlow);
@@ -115,12 +118,32 @@ int main(int argc, char* argv[]){
     bool *d_stopFlag;
 
     
-    cudaMalloc(&d_oldFlow, width * height * sizeof(int));
-    cudaMalloc(&d_newFlow, width * height * sizeof(int));
-    cudaMalloc(&d_flowDir, width * height * sizeof(int));
-    cudaMalloc(&d_accum, width * height * sizeof(int));
-    cudaMalloc(&d_stopFlag, sizeof(bool));
-    
+    // Allocate memory for d_oldFlow on device
+    if (cudaMalloc(&d_oldFlow, width * height * sizeof(int)) != cudaSuccess) {
+        std::cerr << "Error allocating memory for Old Flow on device" << std::endl;
+        return -1;
+    }
+    // Allocate memory for d_newFlow on device
+    if (cudaMalloc(&d_newFlow, width * height * sizeof(int)) != cudaSuccess) {
+        std::cerr << "Error allocating memory for New Flow on device" << std::endl;
+        return -1;
+    }
+    // Allocate memory for d_flowDir on device
+    if (cudaMalloc(&d_flowDir, width * height * sizeof(int)) != cudaSuccess) {
+        std::cerr << "Error allocating memory for Flow Direction on device" << std::endl;
+        return -1;
+    }
+    // Allocate memory for d_accum on device
+    if (cudaMalloc(&d_accum, width * height * sizeof(int)) != cudaSuccess) {
+        std::cerr << "Error allocating memory for Accumulation on device" << std::endl;
+        return -1;
+    }
+    // Allocate memory for d_stopFlag on device
+    if (cudaMalloc(&d_stopFlag, sizeof(bool)) != cudaSuccess) {
+        std::cerr << "Error allocating memory for Stop Flag on device" << std::endl;
+        return -1;
+    }
+        
     //copy flow direction data to device
     cudaError_t memcpy_err_flowDir = cudaMemcpy(d_flowDir, flowDir, sizeof(int) * width * height, cudaMemcpyHostToDevice);
     if (memcpy_err_flowDir != cudaSuccess){
