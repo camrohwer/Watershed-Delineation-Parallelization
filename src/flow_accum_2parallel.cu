@@ -4,65 +4,35 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+
 #define THREADCELLS 4
 #define BLOCK_SIZE 16
+
+__constant__ int offsetX[9] = {0, -1, 0, 1, 1, 1, 0, -1, -1};
+__constant__ int offsetY[9] = {0, -1, -1, -1, 0, 1, 1, 1, 0};
+__constant__ int direction[9] = {0, 1, 2, 3, 4, 5, 6, 7, 8}; 
+
 
 //two nested for loops - handle in the neighborhood sequentially
 //fourth array - takes place of the cells - used for writing final to? cumulative?
 __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, int * flowDir, bool* gpuStop, int N, int M){
-    //__shared__ int sharedOldFlow[BLOCK_SIZE][BLOCK_SIZE];
-    //*gpuStop = false;
-    //int x = blockIdx.x * blockDim.x + threadIdx.x; 
-    //int y = blockIdx.y * blockDim.x + threadIdx.y;
     int i = THREADCELLS * (blockIdx.y * BLOCK_SIZE + threadIdx.y);
     int j = THREADCELLS * (blockIdx.x * BLOCK_SIZE + threadIdx.x);
-    if (i >= N || j >= M || i < 0 || j < 0) return;
-    for (int r = i; r <= i + THREADCELLS && r < N && r > 0; r++){
-        for (int s = j; s <= j + THREADCELLS && r < M && r > 0; s++){
+
+    for (int r = i; r < i + THREADCELLS && r < N; r++){
+        for (int s = j; s < j + THREADCELLS && s < M; s++){
             int currFlow = gpuOldFlow[r * M + s];
             if (currFlow > 0){
                 gpuOldFlow[r * M + s] = 0;
-                int targetX = 0;
-                int targetY = 0;
-                int dir = flowDir[r * M + s];
-                switch (dir){
-                case 1: //northwest
-                    targetY -=1;
-                    targetX -=1;
-                    break;
-                case 2: //north
-                    targetY -=1;
-                    break;
-                case 3: //northeast
-                    targetY -=1;
-                    targetX +=1;
-                    break;
-                case 4: //east
-                    targetX += 1;
-                    break;
-                case 5: //southeast
-                    targetY +=1;
-                    targetX +=1;
-                    break;
-                case 6: //south
-                    targetY +=1;
-                    break;
-                case 7: //southwest
-                    targetY +=1;
-                    targetX -=1;
-                    break;
-                case 8: //west
-                    targetX -=1;
-                    break;
-                }
-                int k = i + targetX;
-                int l = j + targetY;
+                int cellFlowDir = flowDir[r * M + s]; 
+                int k = offsetX[cellFlowDir];
+                int l = offsetY[cellFlowDir];
 
-                if (k >= N || l >= M || k < 0 || l < 0) return;
-                if (k >= 0 && k < N && l >= 0 && l < M) {
-                    atomicAdd(&gpuNewFlow[l * M + k], currFlow);
-                    atomicAdd(&gpuAccum[l * M + k], currFlow);
-                    *gpuStop = true;
+                int newR = r + l;
+                int newS = s + k;
+                if (newR >= 0 && newR < N && newS >= 0 && newS < M) {
+                    atomicAdd(&gpuNewFlow[newR * M + newS], currFlow);
+                    atomicAdd(&gpuAccum[newR * M + newS], currFlow);
                 }
             } 
         }
@@ -90,7 +60,7 @@ int main(int argc, char* argv[]){
 
     //create output raster for flow accumulation
     const char *outputFilename = argv[2];
-    //const char *outputFilename = "../../DEMs/Output/parallel_flow_accum.tif"; //TODO should fix abs paths
+
     //Geotiff Driver
     GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
     //32int Empty raster with same dims as input
@@ -104,7 +74,6 @@ int main(int argc, char* argv[]){
     int height = D8Dataset->GetRasterYSize();
     bool *stopFlag = new bool;
     int *flowDir = (int *)CPLMalloc(sizeof(int) * width * height);
-    
 
     //populate demData dynamically allocated memory
     CPLErr err = D8Dataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, flowDir, width, height, GDT_Int32, 0, 0);
@@ -116,7 +85,6 @@ int main(int argc, char* argv[]){
     //allocating device mem
     int *d_oldFlow, *d_newFlow, *d_flowDir, *d_accum;
     bool *d_stopFlag;
-
     
     // Allocate memory for d_oldFlow on device
     if (cudaMalloc(&d_oldFlow, width * height * sizeof(int)) != cudaSuccess) {
@@ -133,9 +101,9 @@ int main(int argc, char* argv[]){
         std::cerr << "Error allocating memory for Flow Direction on device" << std::endl;
         return -1;
     }
-    // Allocate memory for d_accum on device
+      // Allocate memory for d_flowDir on device
     if (cudaMalloc(&d_accum, width * height * sizeof(int)) != cudaSuccess) {
-        std::cerr << "Error allocating memory for Accumulation on device" << std::endl;
+        std::cerr << "Error allocating memory for Flow Direction on device" << std::endl;
         return -1;
     }
     // Allocate memory for d_stopFlag on device
@@ -152,20 +120,22 @@ int main(int argc, char* argv[]){
     }
     int* hostOldFlow = new int[width * height];
     for (int i = 0; i < width * height; ++i) {
-        //set this to 0 or 1?
-        //was 1 before
-        hostOldFlow[i] = 0;
+        hostOldFlow[i] = 1;
+    }
+
+    int* hostNewFlow = new int [width*height];
+    for (int i = 0; i < width * height; ++i) {
+        hostNewFlow[i] = 0;
     }
 
     cudaMemcpy(d_oldFlow, hostOldFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemset(d_newFlow, 0, sizeof(int) * width *height);
+    cudaMemcpy(d_newFlow, hostNewFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemset(d_accum, 0, sizeof(int) * width * height);   
+
     //define grid and block size
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
-
-    //call kernel 
     //do{
     for(int x = 0; x < 3; x++){
         printf("Iteration: %d\n", x);
@@ -197,7 +167,6 @@ int main(int argc, char* argv[]){
         return -1;
     }
     
-    
     cudaFree(d_oldFlow);
     cudaFree(d_newFlow);
     cudaFree(d_flowDir);
@@ -207,6 +176,4 @@ int main(int argc, char* argv[]){
     GDALClose(D8Dataset);
     GDALClose(flowAccumDataset);
     return 0;
-
-
 }
