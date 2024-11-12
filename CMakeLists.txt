@@ -33,7 +33,7 @@ add_executable(flow_direction_parallel src/flow_direction_parallel.cu)
 # Link the GDAL library to the CUDA parallel executable
 target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
-add_executable(flow_accum src/flow_accum_2parallel.cu)
+add_executable(flow_accum src/flow_accum.cu)
 
 target_link_libraries(flow_accum PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
