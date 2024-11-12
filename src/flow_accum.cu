@@ -25,6 +25,7 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
             if (curFlow > 0){
                 gpuOldFlow[r * M + s] = 0;
                 int cellFlowDir = flowDir[r * M + s]; 
+                if (cellFlowDir == 0) break;
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
 
@@ -55,6 +56,21 @@ int main(int argc, char* argv[]){
         return -1;
     }
 
+    //Get projection info
+    const char* projection = D8Dataset->GetProjectionRef();
+    if (projection == nullptr){
+        std::cerr<< "Error: Could not retrieve projection information" << std::endl;
+        GDALClose(D8Dataset);
+        return -1;
+    }
+    double geoTransform[6];
+
+    if (D8Dataset->GetGeoTransform(geoTransform) != CE_None){
+        std::cerr << "Error reading geo-transform" << std::endl;
+        GDALClose(D8Dataset);
+        return -1;
+    }
+
     //create output raster for flow accumulation
     const char *outputFilename = argv[2];
     //Geotiff Driver
@@ -64,6 +80,10 @@ int main(int argc, char* argv[]){
                                                     D8Dataset->GetRasterXSize(),
                                                     D8Dataset->GetRasterYSize(),
                                                     1, GDT_Int32, NULL);
+
+    //Set projection of output
+    flowAccumDataset->SetProjection(projection);
+    flowAccumDataset->SetGeoTransform(geoTransform);
 
     //Raster size to use with Malloc and device mem
     int width = D8Dataset->GetRasterXSize();
@@ -147,8 +167,8 @@ int main(int argc, char* argv[]){
         d_newFlow = temp;
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
 
-        //early exit
-        if (x == 10000){
+        //early termination to prevent infite looping if error in flow direction data
+        if (x == 500){
             break;
         }
     } while (*stopFlag != 0);
