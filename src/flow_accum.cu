@@ -13,8 +13,7 @@ __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
                             // 0,  1,  2,  3,  4,  5,  6,  7,  8 
 
 
-//two nested for loops - handle in the neighborhood sequentially
-//fourth array - takes place of the cells - used for writing final to? cumulative?
+//Each thread handles a THREADCELLS x THREADCELLS neighbourhood
 __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, int * flowDir, int* gpuStop, int N, int M){
     int i = THREADCELLS * (blockIdx.y * blockDim.y + threadIdx.y);
     int j = THREADCELLS * (blockIdx.x * blockDim.x + threadIdx.x);
@@ -25,7 +24,7 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
             if (curFlow > 0){
                 gpuOldFlow[r * M + s] = 0;
                 int cellFlowDir = flowDir[r * M + s]; 
-                if (cellFlowDir == 0) break;
+                if (cellFlowDir == 0) continue;
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
 
