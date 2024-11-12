@@ -8,9 +8,9 @@
 #define THREADCELLS 4
 #define BLOCK_SIZE 8
 
-__constant__ int offsetX[9] = {0, -1, 0, 1, 1, 1, 0, -1, -1};
-__constant__ int offsetY[9] = {0, -1, -1, -1, 0, 1, 1, 1, 0};
-// direction = {0, 1, 2, 3, 4, 5, 6, 7, 8}; 
+__constant__ int offsetX[9] = {0, -1,  0,  1,  1,  1,  0, -1, -1};
+__constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
+                            // 0,  1,  2,  3,  4,  5,  6,  7,  8 
 
 
 //two nested for loops - handle in the neighborhood sequentially
@@ -23,7 +23,7 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
         for (int s = j; s < j + THREADCELLS && s < M; s++){
             int curFlow = gpuOldFlow[r * M + s];
             if (curFlow > 0){
-                atomicExch(&gpuOldFlow[r * M + s], 0);
+                gpuOldFlow[r * M + s] = 0;
                 int cellFlowDir = flowDir[r * M + s]; 
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
@@ -36,27 +36,6 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
             } 
         }
     }
-}
-
-__global__ void flowAccumKernel2(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, int * flowDir, int* gpuStop, int height, int width){
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.x * blockDim.y + threadIdx.y;
-    int idx = y * width + x;
-
-    int curFlow = gpuOldFlow[idx];
-    if (curFlow > 0){
-        gpuOldFlow[idx] = 0;
-        int cellFlowDir = flowDir[idx]; 
-        int newX = x + offsetX[cellFlowDir];
-        int newY = y + offsetY[cellFlowDir];
-
-        int newIdx = newY * width + newX;
-        if (newY >= 0 && newY < height && newX >= 0 && newX < width) {
-            atomicAdd(&gpuNewFlow[newIdx], curFlow);
-            atomicAdd(&gpuAccum[newIdx], curFlow);
-            atomicOr(gpuStop, 1);
-        }
-    } 
 }
 
 int main(int argc, char* argv[]){
@@ -148,13 +127,12 @@ int main(int argc, char* argv[]){
     int x = 0;
     int *stopFlag = new int(0);
 
-    for(int i = 0; i < 1000; ++i){
-    //do{
+    do{
         printf("Iteration: %d\n", x++);
         *stopFlag = 0;
         cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
-        flowAccumKernel2<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDir, d_stopFlag, height, width);
+        flowAccumKernel<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDir, d_stopFlag, height, width);
 
         cudaError_t kernelErr = cudaGetLastError();
         if (kernelErr != cudaSuccess){
@@ -168,11 +146,14 @@ int main(int argc, char* argv[]){
         d_oldFlow = d_newFlow;
         d_newFlow = temp;
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
-    //} while (*stopFlag != 0);
-    }
+
+        //early exit
+        if (x == 10000){
+            break;
+        }
+    } while (*stopFlag != 0);
 
     int *hostflowAccumulationData = (int *)CPLMalloc(sizeof(int) * width * height);
-    cudaDeviceSynchronize();
     cudaMemcpy(hostflowAccumulationData, d_accum, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
 
     err = flowAccumDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
