@@ -33,11 +33,19 @@ add_executable(flow_direction_parallel src/flow_direction_parallel.cu)
 # Link the GDAL library to the CUDA parallel executable
 target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
+# Run the GPU architecture detection program and capture the output
 add_executable(flow_accum src/flow_accum.cu)
 
 target_link_libraries(flow_accum PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
-# Run the GPU architecture detection program and capture the output
+add_executable(pit_filling src/pit_filling.cu)
+
+target_link_libraries(pit_filling PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+
+add_executable(pit_filling_flow_direction src/pit_filling_flow_direction.cu)
+
+target_link_libraries(pit_filling_flow_direction PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+
 # Run the GPU architecture detection program and capture the output
 execute_process(
     COMMAND ${CMAKE_CUDA_COMPILER} ${CMAKE_SOURCE_DIR}/src/detect_gpu_arch.cu -o detect_gpu_arch
@@ -58,10 +66,9 @@ endif()
 message(STATUS "Detected GPU architecture: compute_${GPU_ARCH}")
 
 # Use the detected architecture in the compile options
-foreach(cuda_target flow_direction_parallel flow_accum)
+foreach(cuda_target flow_direction_parallel pit_filling pit_filling_flow_direction flow_accum)
     target_compile_options(${cuda_target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_${GPU_ARCH},code=sm_${GPU_ARCH}>
         $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
     )
 endforeach()
-

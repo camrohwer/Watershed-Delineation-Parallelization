@@ -1,85 +1,85 @@
 #include <iostream>
 #include <gdal_priv.h>
 #include <cuda_runtime.h>
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <queue>
-#include <vector>
-#include <limits.h>
 #include <float.h>
 
-struct PitCell {
-    float elevation;
-    int index;
-};
+#define BLOCK_DIM_X 8
+#define BLOCK_DIM_Y 8
+#define HEIGHT_CONST 0.1f
 
-__global__ void pitFilling(PitCell* pits, int numPits, const float* dem, const int width, const int height, const float hc){
-    int idx = y * width + x;
-    PitCell pit = pits[idx];
+//loop offsets for checking neighbours
+__constant__ int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
+__constant__ int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
 
-    float lowestNeighbour = FLT_MAX;
-    
-    for (int dy = -1; dy <= 1; dy++){
-        for (int dx = -1; dx <= 1; dx++){
-            if (dx == 0 && dy == 0) continue; //skip current pixel
+__global__ void identifyAndFillPits(float* dem, int* numPits, int width, int height, float hc){
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-            int nx = x + dx;
-            int ny = y + dy;
+    if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return; // skip boundary 
 
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height){
-                float n = dem[ny * width + nx];
+    __shared__ float sharedDem[BLOCK_DIM_Y + 2][BLOCK_DIM_X + 2];
 
-                if (n < lowestNeighbour) {
-                    lowestNeighbour = n;
-                }
-            }
-        }
+    int tx = threadIdx.x + 1;
+    int ty = threadIdx.y + 1;
+
+    //load shared dem values 
+    sharedDem[ty][tx] = dem[y * width + x];
+
+    //left padding 
+    if (threadIdx.x == 0 && x > 0){
+        sharedDem[ty][0] = dem[y * width + (x - 1)];
     }
-    if (lowestNeighbour != FLT_MAX) {
-        pits[idx].elevation = lowestNeighbour + 0.0001f;
+    //right padding
+    if (threadIdx.x == blockDim.x - 1 && x < width - 1) {
+        sharedDem[ty][tx + 1] = dem[y * width + (x + 1)];
     }
-}
-__global__ void identifyPits(const float* dem, PitCell* pitCells, int* numPits, int width, int height){
-    int x = blockidx.x * blockdim.x + threadidx.x;
-    int y = blockidx.y * blockdim.y + threadidx.y;
+    //top padding
+    if (threadIdx.y == 0 && y > 0){ 
+        sharedDem[0][tx] = dem[(y - 1) * width + x];
+    }
+    //bottom padding
+    if (threadIdx.y == blockDim.y - 1 && y < height - 1){
+        sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
+    }
+    __syncthreads();
 
-    if (x <= 1 || x >= width || y <= 1 || y >= height) return; // skip boundary 
-
-    int idx = y * width + x;
-    float curElev = dem[idx];
-
+    float curElev = static_cast<float>(sharedDem[ty][tx]);
     bool isPit = true;
+    float lowestNeighbour = FLT_MAX;
 
-    for (int dy = -1; dy <= 1; dy++){
-        for (int dx = -1; dx <= 1; dx++){
-            if (dx == 0 && dy == 0) continue; //skip current pixel
+    for (int i = 0; i < 8; i++){
+        int neighbourElev = sharedDem[ty + offsetY[i]][tx + offsetX[i]];
 
-            int nx = x + dx;
-            int ny = y + dy;
-
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height){
-                //get neightbour index
-                int ni = ny * width + nx;
-                if (dem[ni] <= curElev){
-                    isPit = false;
-                    break;
-                }
+        if (neighbourElev <= curElev){
+            isPit = false;
+            break;
+        }else{
+            if (neighbourElev < lowestNeighbour){
+                lowestNeighbour = neighbourElev;
             }
         }
-        if (!isPit) break;
     }
 
-    // if pit, store elev
+    //keep count of pits in local variable, and only have first thread perform atomic to update global count.
+    //reduces atomics to global
+    __shared__ int localPits;
+    if (threadIdx.x == 0 && threadIdx.y == 0) localPits = 0;
+    __syncthreads();
+
     if (isPit){
-        int count = atomicAdd(numPits, 1);
-        pitCells[count].elevation = curElev;
-        pitCells[count].index = idx;
+        atomicAdd(&localPits, 1);
+        dem[y * width + x] = static_cast<float>(lowestNeighbour) + hc;
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0){
+        atomicAdd(numPits, localPits);
     }
 }
+
 int main(int argc, char* argv[]){
-    if (argc < 2){
-        std::cout << "Please provide a filepath for input" << std::endl;
+    if (argc < 3){
+        std::cout << "Please provide a filepath for input and output raster" << std::endl;
         return -1;
     }
 
@@ -90,10 +90,32 @@ int main(int argc, char* argv[]){
     const char* input = argv[1];
     GDALDataset* demDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
 
-    if (demDataset == NULL) {
-        std::cerr << "Error opening DEM file." << std::endl;
+    if (demDataset == nullptr){
+        std::cerr << "Error opening DEM file" << std::endl;
         return -1;
     }
+
+    const char* projection = demDataset->GetProjectionRef();
+    double geoTransform[6];
+
+    if (demDataset->GetGeoTransform(geoTransform) != CE_None){
+        std::cerr << "Error reading geo-transform" << std::endl;
+        GDALClose(demDataset);
+        return -1;
+    }
+
+    //create output raster for pit filling
+    const char *outputFilename = argv[2];
+    //Geotiff Driver
+    GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    //32int Empty raster with same dims as input
+    GDALDataset *pitFillingDataset = poDriver->Create(outputFilename,
+                                                    demDataset->GetRasterXSize(),
+                                                    demDataset->GetRasterYSize(),
+                                                    1, GDT_Float32, NULL);
+
+    pitFillingDataset->SetProjection(projection);
+    pitFillingDataset->SetGeoTransform(geoTransform);
 
     //Raster size to use with Malloc and device mem
     int width = demDataset->GetRasterXSize();
@@ -108,74 +130,49 @@ int main(int argc, char* argv[]){
         return -1;
     }
 
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
     //allocating device mem
     float *d_dem;
-    PitCell *d_pitCells;
-
-    if (cudaMalloc(&d_dem, sizeof(float) * width * height) != cudaSuccess) {
-        std::cerr << "Error allocating memory for DEM on device." << std::endl;
-        return -1;
-    }
-
-    if (cudaMalloc(&d_pitCells, sizeof(PitCell) * width * height) != cudaSuccess) {
-        std::cerr << "Error allocating memory for pit cells on device." << std::endl;
-        cudaFree(d_dem); // Free already allocated memory
-        return -1;
-    }
-
-    //copy DEM data to device
-    cudaError_t memcpy_err = cudaMemcpy(d_dem, demData, sizeof(float) * width * height, cudaMemcpyHostToDevice);
-    if (memcpy_err != cudaSuccess){
-        std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err) << std::endl;
-        return -1;
-    }
+    cudaMalloc(&d_dem, sizeof(float) * width * height);
 
     int* d_numPits;
-    int numPits = 0;
-
     cudaMalloc(&d_numPits, sizeof(int));
-    cudaMemcpy(d_numPits, &numPits, sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemset(d_numPits, 0, sizeof(int));
+
+    int numPits = 0;
+    
+    //copy DEM data to device
+    cudaMemcpyAsync(d_dem, demData, sizeof(float) * width * height, cudaMemcpyHostToDevice, stream);
 
     //define grid and block size
-    dim3 blockSize(8,8);
-    dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+    dim3 blockSize(BLOCK_DIM_X,BLOCK_DIM_Y);
+    dim3 gridSize((width + BLOCK_DIM_X - 1) / BLOCK_DIM_X, (height + BLOCK_DIM_Y - 1) / BLOCK_DIM_Y);
 
-    identifyPits<<<gridSize, blockSize>>>(d_dem, d_pitCells, d_numPits, width, height);
-    cudaDeviceSynchronize();
+    identifyAndFillPits<<<gridSize, blockSize, 0, stream>>>(d_dem, d_numPits, width, height, HEIGHT_CONST);
 
-    cudaError_t kernel_err = cudaGetLastError();
-    if (kernel_err != cudaSuccess){
-        std::cerr << "Kernel Launch failed: " << cudaGetErrorString(kernel_err) << std::endl;
+    // copy pit count from device to host
+    cudaMemcpyAsync(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost, stream);
+    cudaMemcpyAsync(demData, d_dem, sizeof(float) * width * height, cudaMemcpyDeviceToHost, stream);
+
+    cudaStreamSynchronize(stream);
+
+    // Write pit filling data to the output dataset
+    err = pitFillingDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, demData, width, height, GDT_Float32, 0, 0);
+    if (err != CE_None) {
+        std::cerr << "Error writing pit filling data: " << CPLGetLastErrorMsg() << std::endl;
         return -1;
     }
 
-    // copy pit count from device to host
-    cudaMemcpy(&numPits, d_numPits, sizeof(int), cudaMemcpyDeviceToHost);
-
-    std::vector<PitCell> hostPits(numPits);
-    cudaMemcpy(hostPits.data(), d_pitCells, numPits * sizeof(PitCell), cudaMemcpyDeviceToHost);
-
     cudaFree(d_dem);
-    cudaFree(d_pitCells);
     cudaFree(d_numPits);
+    CPLFree(demData);
+    GDALClose(demDataset);
+    GDALClose(pitFillingDataset);
+    cudaStreamDestroy(stream);
 
-    //place pits in PQ
-    std::priority_queue<int> pq;
-    for (const auto& pit : hostPits){
-        pq.push(pit.elevation);
-    }
-
-    //OUPUT FOR TESTING
-    int j = 0;
-    std::cout << "Pits sorted by elevation" << std::endl;
-    while(!pq.empty()){
-        j++;
-        pq.pop();
-    }
-
-    std::cout << "Size of PQ: " << j <<std::endl;
-    int cell_count = width * height;
-    std::cout << "Total Cells: " << cell_count << std::endl;
-    float pit_count =  static_cast<float>(j);
-    std::cout << "Pit Rate: " << (pit_count / cell_count) * 100 << "%" << std::endl;
+    std::cout << "Number of pits filled: " << numPits << std::endl;
+    std::cout << "Pit filling completed and output written to " << outputFilename << std::endl;
+    return 0;
 }
