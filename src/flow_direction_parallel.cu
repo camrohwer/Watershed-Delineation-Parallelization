@@ -25,26 +25,41 @@ __global__ void flowDirectionKernel(int* dem, int* flow_dir, int width, int heig
     int tx = threadIdx.x + 1;
     int ty = threadIdx.y + 1;
 
-    if (x < width && y < height){
-        sharedDem[ty][tx] = dem[y * width + x];
+    sharedDem[ty][tx] = dem[y * width + x];
 
-        //left padding 
-        if (threadIdx.x == 0 && x > 0){
-            sharedDem[ty][0] = dem[y * width + (x - 1)];
-        }
-        //right padding
-        if (threadIdx.x == blockDim.x - 1 && x < width - 1) {
-            sharedDem[ty][tx + 1] = dem[y * width + (x + 1)];
-        }
-        //top padding
-        if (threadIdx.y == 0 && y > 0){ 
-            sharedDem[0][tx] = dem[(y - 1) * width + x];
-        }
-        //bottom padding
-        if (threadIdx.y == blockDim.y - 1 && y < height - 1){
-            sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
-        }
+    //left padding 
+    if (threadIdx.x == 0 && x > 0){
+        sharedDem[ty][0] = dem[y * width + (x - 1)];
     }
+    //right padding
+    if (threadIdx.x == blockDim.x - 1 && x < width - 1) {
+        sharedDem[ty][tx + 1] = dem[y * width + (x + 1)];
+    }
+    //top padding
+    if (threadIdx.y == 0 && y > 0){ 
+        sharedDem[0][tx] = dem[(y - 1) * width + x];
+    }
+    //bottom padding
+    if (threadIdx.y == blockDim.y - 1 && y < height - 1){
+        sharedDem[ty + 1][tx] = dem[(y + 1) * width + x];
+    }
+    //top left corner
+    if (threadIdx.x == 0 && threadIdx.y == 0 && x > 0 && y > 0) {
+    sharedDem[0][0] = dem[(y - 1) * width + (x - 1)];
+    }
+    //top right corner
+    if (threadIdx.x == blockDim.x - 1 && threadIdx.y == 0 && x < width - 1 && y > 0) {
+        sharedDem[0][tx + 1] = dem[(y - 1) * width + (x + 1)];
+    }
+    //bottom left corner
+    if (threadIdx.x == 0 && threadIdx.y == blockDim.y - 1 && x > 0 && y < height - 1) {
+        sharedDem[ty + 1][0] = dem[(y + 1) * width + (x - 1)];
+    }
+    // bottom right corner
+    if (threadIdx.x == blockDim.x - 1 && threadIdx.y == blockDim.y - 1 && x < width - 1 && y < height - 1) {
+        sharedDem[ty + 1][tx + 1] = dem[(y + 1) * width + (x + 1)];
+    }
+
     __syncthreads();
 
     int centre = sharedDem[ty][tx]; //get dem value at current pixel
