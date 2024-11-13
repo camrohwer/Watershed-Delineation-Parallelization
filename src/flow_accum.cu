@@ -14,7 +14,7 @@ __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
 
 
 //Each thread handles a THREADCELLS x THREADCELLS neighbourhood
-__global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, int * flowDir, int* gpuStop, int N, int M){
+__global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, const int * flowDir, int* gpuStop, const int N, const int M){
     int i = THREADCELLS * (blockIdx.y * blockDim.y + threadIdx.y);
     int j = THREADCELLS * (blockIdx.x * blockDim.x + threadIdx.x);
 
@@ -62,8 +62,8 @@ int main(int argc, char* argv[]){
         GDALClose(D8Dataset);
         return -1;
     }
-    double geoTransform[6];
 
+    double geoTransform[6];
     if (D8Dataset->GetGeoTransform(geoTransform) != CE_None){
         std::cerr << "Error reading geo-transform" << std::endl;
         GDALClose(D8Dataset);
@@ -147,7 +147,7 @@ int main(int argc, char* argv[]){
     int *stopFlag = new int(0);
 
     do{
-        printf("Iteration: %d\n", x++);
+        printf("Kernel iteration: %d\n", x++ + 1);
         *stopFlag = 0;
         cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
@@ -182,6 +182,7 @@ int main(int argc, char* argv[]){
         return -1;
     }
     
+    //perform cleanup
     cudaFree(d_oldFlow); cudaFree(d_newFlow); cudaFree(d_flowDir);
     cudaFree(d_stopFlag); cudaFree(d_accum);
     CPLFree(flowDir);
