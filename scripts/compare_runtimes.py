@@ -27,48 +27,85 @@ file_list = [
     f for f in os.listdir(dem_dir)
     if os.path.isfile(os.path.join(dem_dir, f)) and not f.startswith('.')
 ]
+print(file_list)
 
-num_runs = 1
-total_execs = num_runs * len(file_list) * 2
+num_runs = 5
+total_execs = num_runs * len(file_list) * 4
 print(f"Number of Runs {num_runs}")
 
-i_runtimes = []
-p_runtimes = []
+pit_runtimes = []
+dir_runtimes = []
+pit_dir_runtimes = []
+accum_runtimes = []
 
 i = 0
 for _ in range(num_runs):
     for file in file_list:
         raster_cell = file.replace(".tif", "")
         input = os.path.join(dem_dir, file)
-        output_name = raster_cell + "_flow_direction"
+        output_name = raster_cell
 
-        i_output = os.path.join(output_dir, output_name + "_iterative")
-        time_i, output_i, error_i = run_executable(["./build/bin/flow_direction_iterative", input, i_output])
-        if time_i is not None:
-            i_runtimes.append(time_i)
+        pit_output = os.path.join(output_dir, output_name + "_filled.tif")
+        time_pit, output_pit, error_pit = run_executable(["./build/bin/pit_filling", input, pit_output])
+        if time_pit is not None:
+            pit_runtimes.append(time_pit)
         else:
-            print(f"Iterative Error: {error_i}")
+            print(f"Pit Error: {error_pit}")
             break
 
         i += 1
         status(i, total_execs)
 
-        p_output = os.path.join(output_dir, output_name + "_parallel")
-        time_p, output_p, error_p = run_executable(["./build/bin/flow_direction_parallel", input, p_output])
-        if time_p is not None:
-            p_runtimes.append(time_p)
+        dir_output = os.path.join(output_dir, output_name + "_dir.tif")
+        time_dir, output_fdir, error_dir = run_executable(["./build/bin/flow_direction_parallel", input, dir_output])
+        if time_dir is not None:
+            dir_runtimes.append(time_dir)
         else:
-            print(f"Parallel Error: {error_p}")
+            print(f"Flow Direction Error: {error_dir}")
             break
 
+        i += 1
+        status(i, total_execs)
+
+        pit_dir_output = os.path.join(output_dir, output_name + "_filled_dir.tif")
+        time_pit_dir, output_pit_dir, error_pit_dir = run_executable(["./build/bin/pit_filling_flow_direction", input, pit_dir_output])
+        if time_pit_dir is not None:
+            pit_dir_runtimes.append(time_pit_dir)
+        else:
+            print(f"Flow Direction Error: {error_pit_dir} \n")
+            break
+
+        i += 1
+        status(i, total_execs)
+
+file_list = [
+    f for f in os.listdir(output_dir)
+    if os.path.isfile(os.path.join(output_dir, f)) and not f.startswith('.') and f.endswith("filled_dir.tif")
+]
+
+for _ in range(num_runs):
+    for file in file_list:
+        accum_output = os.path.join(output_dir, output_name + "_accum")
+        time_accum, output_accum, error_accum = run_executable(["./build/bin/flow_accum", input, accum_output])
+        if time_accum is not None:
+            accum_runtimes.append(time_accum)
+        else:
+            print(f"Flow Direction Error: {error_accum}")
+            break
 
         i += 1
         status(i, total_execs)
 
 print("")
     
-avg_i = sum(i_runtimes) / len(i_runtimes)
-print(f"Average runtime of Iterative solution: {avg_i:.4f} seconds")
+avg_pit = sum(pit_runtimes) / len(pit_runtimes)
+print(f"Average runtime of pit filling: {avg_pit:.4f} seconds\n")
 
-avg_p = sum(p_runtimes) / len(p_runtimes)
-print(f"Average runtime of Parallel solution: {avg_p:.4f} seconds")
+avg_dir = sum(dir_runtimes) / len(dir_runtimes)
+print(f"Average runtime of flow direction calculation: {avg_dir:.4f} seconds\n")
+
+avg_pit_dir = sum(pit_dir_runtimes) / len(pit_dir_runtimes)
+print(f"Average runtime of pit filling and flow direction combined kernel: {avg_pit_dir:.4f} seconds\n")
+
+avg_accum = sum(accum_runtimes) / len(accum_runtimes)
+print(f"Average runtime of flow accumulation calculations: {avg_accum:.4f} seconds")
