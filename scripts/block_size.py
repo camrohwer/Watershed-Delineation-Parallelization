@@ -15,7 +15,7 @@ def run_executable(command):
     except subprocess.CalledProcessError as e:
         return None, e.stdout.decode(), e.stderr.decode()
 
-if not os.path.exists("./pit_filling_flow_direction"):
+if not os.path.exists("./flow_direction_parallel"):
     print("Executable not found!")
     exit(1)
 
@@ -24,7 +24,7 @@ num_runs = 5
 print(f"Number of Runs {num_runs}")
 
 for dim_x, dim_y in block_sizes:
-    parallel = ['./pit_filling_flow_direction', '../../DEMs/092G.tif', '../../DEMs/Output/092G_filled.tif' str(dim_x), str(dim_y)]
+    parallel = ['./flow_direction_parallel', '../../DEMs/cdem_dem_092G.tif', str(dim_x), str(dim_y)]
     
     runtimes = []
     for _ in range(num_runs):
