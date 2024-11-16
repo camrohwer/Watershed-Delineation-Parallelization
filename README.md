@@ -92,13 +92,31 @@ You can run the alorithms using the following commands:
 ### Iterative Flow Direction
 
 ```bash
-./flow_direction_iterative /relative/path/to/input/DEM
+./flow_direction_iterative /relative/path/to/input/DEM /relative/path/to/output/Raster
 ```
 
 ### Parallel Flow Direction
 
 ```bash
-./flow_direction_parallel /relative/path/to/input/DEM 
+./flow_direction_parallel /relative/path/to/input/DEM /relative/path/to/output/Raster
+```
+
+### Pit Filling
+
+```bash
+./pit_filling /relative/path/to/input/DEM /relative/path/to/output/DEM
+```
+
+### Combined Pit Filling and Flow Direction
+
+```bash
+./pit_filling_flow_direction /relative/path/to/input/DEM /relative/path/to/output/Raster
+```
+
+### Flow Accumulation
+
+```bash
+./flow_accum /relative/path/to/input/Flow/Direction/Raster /relative/path/to/output/Raster
 ```
 
 ## Scripting
