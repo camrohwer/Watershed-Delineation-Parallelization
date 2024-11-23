@@ -36,7 +36,7 @@ __global__ void endpointIdentification(const int* flowDir, const int* streams, i
 
         for (int i = 0; i < 8; i++){
             int nx = x + offsetX[i];
-            int ny = y + offsetX[i];
+            int ny = y + offsetY[i];
 
             if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                 int nIdx = ny * width + nx;
