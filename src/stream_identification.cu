@@ -7,8 +7,10 @@
 #define BLOCK_DIM_X 8
 #define BLOCK_DIM_Y 8
 
-__constant__ int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
-__constant__ int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
+__constant__ int offsetX[9] = { 0,  -1,  0,  1, 1, 1, 0, -1, -1};
+__constant__ int offsetY[9] = { 0,  -1, -1, -1, 0, 1, 1,  1,  0};
+__constant__ int direction[9] = { 0, 1,  2,  3, 4, 5, 6,  7,  8}; 
+
 
 __global__ void streamIdentification(const int* flowAccum, int* stream, int threshold, int width, int height){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -33,26 +35,57 @@ __global__ void endpointIdentification(const int* flowDir, const int* streams, i
 
     if (streams[idx] == 1){
         int hasDownstream = 0;
+        int flowDirection = flowDir[idx];
 
-        for (int i = 0; i < 8; i++){
-            int nx = x + offsetX[i];
-            int ny = y + offsetY[i];
+        int nx = x + offsetX[flowDirection];
+        int ny = y + offsetY[flowDirection];
 
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                int nIdx = ny * width + nx;
-                //check if neighbour flows into cell
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+            int nIdx = ny * width + nx;
+
+            if (streams[nIdx] == 1){
                 hasDownstream = 1;
-                break;
             }
         }
+
         endpoints[idx] = (hasDownstream == 0) ? 1 : 0;
     } else {
         endpoints[idx] = 0;
     }
 }
+
+GDALDataset* openRaster(const char* path, GDALAccess access){
+    GDALDataset* dataset = (GDALDataset*) GDALOpen(path, access);
+    if (dataset == nullptr){
+        std::cerr << "Error opening file" << path << std::endl;
+    }
+    return dataset;
+}
+
+void cleanup(int* hostFlowAccumData, int* hostFlowDirData, int* hostStreamData, 
+             int* deviceFlowAccumData, int* deviceFlowDirData, int* deviceStreamData, 
+             GDALDataset* flowAccumDataset, GDALDataset* flowDirDataset, GDALDataset* streamDataset, GDALDataset* endpointDataset) {
+    // Free host memory if allocated
+    if (hostFlowAccumData) CPLFree(hostFlowAccumData);
+    if (hostFlowDirData) CPLFree(hostFlowDirData);
+    if (hostStreamData) CPLFree(hostStreamData);
+
+    // Free device memory if allocated
+    if (deviceFlowAccumData) cudaFree(deviceFlowAccumData);
+    if (deviceFlowDirData) cudaFree(deviceFlowDirData);
+    if (deviceStreamData) cudaFree(deviceStreamData);
+
+    // Close GDAL datasets if opened
+    if (flowAccumDataset) GDALClose(flowAccumDataset);
+    if (flowDirDataset) GDALClose(flowDirDataset);
+    if (streamDataset) GDALClose(streamDataset);
+    if (endpointDataset) GDALClose(endpointDataset);
+}
+
+
 int main(int argc, char* argv[]){
-    //checks for input file passed as arg
-    if (argc < 3){
+    //ARGS : FlowAccum, FlowDir, StreamData, EndpointData
+    if (argc < 5){
         std::cout << "Please provide a filepath for input and output raster" << std::endl;
         return -1;
     }
@@ -60,122 +93,140 @@ int main(int argc, char* argv[]){
     // register drivers to open raster data
     GDALAllRegister();
     
-    // Open flow accumulation dataset
-    const char* input = argv[1];
-    GDALDataset* flowDataset  = (GDALDataset*) GDALOpen(input, GA_ReadOnly);
-
-    if (flowDataset == nullptr) {
-        std::cerr << "Error opening Flow Accumulation file." << std::endl;
+    // open input datasets
+    GDALDataset* flowAccumDataset = (GDALDataset*) GDALOpen(argv[1], GA_ReadOnly);
+    GDALDataset* flowDirDataset = (GDALDataset*) GDALOpen(argv[2], GA_ReadOnly);
+    if (!flowAccumDataset || !flowDirDataset) {
+        cleanup(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, nullptr, nullptr);
         return -1;
     }
 
     //get projection from input raster
-    const char* projection = flowDataset->GetProjectionRef();
+    const char* projection = flowAccumDataset->GetProjectionRef();
     if (projection == nullptr){
-        std::cerr << "Error: Could not retrieve projection from DEM Dataset." << std::endl;
-        GDALClose(flowDataset);
+        std::cerr << "Error: Could not retrieve projection from Flow Accumulation Dataset." << std::endl;
+        cleanup(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, nullptr, nullptr);
         return -1;
     }
     double geoTransform[6];
 
-    if (flowDataset->GetGeoTransform(geoTransform) != CE_None){
+    if (flowAccumDataset->GetGeoTransform(geoTransform) != CE_None){
         std::cerr << "Error reading geo-transform" << std::endl;
-        GDALClose(flowDataset);
+        cleanup(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, nullptr, nullptr);
         return -1;
     }
 
-    //create output raster for flow direction
-    const char *outputFilename = argv[2];
-    //Geotiff Driver
-    GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
-    //32int Empty raster with same dims as input
-    GDALDataset *streamDataset = poDriver->Create(outputFilename,
-                                                    flowDataset->GetRasterXSize(),
-                                                    flowDataset->GetRasterYSize(),
-                                                    1, GDT_Int32, NULL);
+    int width = flowAccumDataset->GetRasterXSize();
+    int height = flowAccumDataset->GetRasterYSize();
 
+    //create output dataset
+    const char *outputFilename1 = argv[3];
+    GDALDriver *poDriver = GetGDALDriverManager()->GetDriverByName("GTiff");
+    GDALDataset *streamDataset = poDriver->Create(outputFilename1, width, height, 1, GDT_Int32, NULL);
+    if (!streamDataset){
+        std::cerr << "Error creating output dataset" << std::endl;
+        cleanup(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, nullptr, nullptr);
+        return -1;
+    }
     streamDataset->SetProjection(projection);
     streamDataset->SetGeoTransform(geoTransform);
 
-    //Raster size to use with Malloc and device mem
-    int width = flowDataset->GetRasterXSize();
-    int height = flowDataset->GetRasterYSize();
-    int *flowData = (int *)CPLMalloc(sizeof(int) * width * height);
-
-    //populate flowData dynamically allocated memory
-    CPLErr err = flowDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, flowData, width, height, GDT_Int32, 0, 0);
-    if (err != CE_None){
-        std::cerr << "Error reading Flow Accumulation data: " << CPLGetLastErrorMsg() << std::endl;
-        CPLFree(flowData);
+    const char *outputFilename2 = argv[4];
+    GDALDataset *endpointDataset = poDriver->Create(outputFilename2, width, height, 1, GDT_Int32, NULL);
+    if (!endpointDataset){
+        std::cerr << "Error creating output dataset" << std::endl;
+        cleanup(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, streamDataset, nullptr);
         return -1;
     }
+    endpointDataset->SetProjection(projection);
+    endpointDataset->SetGeoTransform(geoTransform);
+
+    int *flowAccumData = (int *)CPLMalloc(sizeof(int) * width * height);
+    int *flowDirData = (int *)CPLMalloc(sizeof(int) * width * height);
     int *streamData = (int *)CPLMalloc(sizeof(int) * width * height);
+    int* endpointData = (int*)CPLMalloc(sizeof(int) * width * height);
 
-    int *d_flowData;
-    if (cudaMalloc(&d_flowData, sizeof(int) * width * height) != cudaSuccess){
-        std::cerr << "Error allocation memory for Flow Accumulation data on device" << std::endl;
-        CPLFree(flowData);
-        CPLFree(streamData);
-        return -1;
-    }
-    cudaError_t memcpy_err = cudaMemcpy(d_flowData, flowData, sizeof(int) * width * height, cudaMemcpyHostToDevice);
-    if (memcpy_err != cudaSuccess){
-        std::cerr << "Error copying flow accumulation data to device" << std::endl;
-        CPLFree(flowData);
-        CPLFree(streamData);
-        cudaFree(d_flowData);
+    if (!flowAccumData || !flowDirData || !streamData || !endpointData) {
+        std::cerr << "Memory allocation error on host." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
         return -1;
     }
 
-    int* d_streamData;
-    if (cudaMalloc(&d_streamData, sizeof(int) * width * height) != cudaSuccess){
-        std::cerr << "Errory allocation stream data on device" << std::endl;
-        CPLFree(flowData);
-        CPLFree(streamData);
-        cudaFree(d_flowData);
+    // Read data into host memory
+    if (flowAccumDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, flowAccumData, width, height, GDT_Int32, 0, 0) != CE_None){
+        std::cerr << "Error reading Flow Accumulation data." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
         return -1;
     }
+
+    if (flowDirDataset->GetRasterBand(1)->RasterIO(GF_Read, 0, 0, width, height, flowDirData, width, height, GDT_Int32, 0, 0) != CE_None){
+        std::cerr << "Error reading Flow Direction data." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, nullptr, nullptr, nullptr, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
+        return -1;
+    }
+
+    int *d_flowAccumData, *d_flowDirData, *d_streamData, *d_endpointData;
+
+    if (cudaMalloc(&d_flowAccumData, sizeof(int) * width * height) != cudaSuccess ||
+        cudaMalloc(&d_flowDirData, sizeof(int) * width * height) != cudaSuccess ||
+        cudaMalloc(&d_streamData, sizeof(int) * width * height) != cudaSuccess ||
+        cudaMalloc(&d_endpointData, sizeof(int) * width * height) != cudaSuccess) {
+        std::cerr << "Error allocation memory for data on device" << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
+        return -1;
+    }
+
+    if (cudaMemcpy(d_flowAccumData, flowAccumData, sizeof(int) * width * height, cudaMemcpyHostToDevice) != cudaSuccess ||
+        cudaMemcpy(d_flowDirData, flowDirData, sizeof(int) * width * height, cudaMemcpyHostToDevice) != cudaSuccess) {
+        std::cerr << "Error copying data to device." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
+        return -1;
+    }
+    
 
     dim3 blockSize(BLOCK_DIM_X, BLOCK_DIM_Y);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y); //dynamic grid allocation based on input size
-
     int threshold = 300;
 
-    std::cout << "Kernel Launch" << std::endl;
-    streamIdentification<<<gridSize, blockSize>>>(d_flowData, d_streamData, threshold, width, height);
-    cudaError_t kernel_err = cudaGetLastError();
-    if (kernel_err != cudaSuccess){
-        std::cerr << "Cuda kernel launch error: " << cudaGetErrorString(kernel_err) << std::endl;
+    std::cout << "Stream Identification Kernel Launched" << std::endl;
+    streamIdentification<<<gridSize, blockSize>>>(d_flowAccumData, d_streamData, threshold, width, height);
+    if (cudaGetLastError() != cudaSuccess){
+        std::cerr << "Cuda kernel launch error." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
         return -1;
     }
     cudaDeviceSynchronize();
-    std::cout << "Kernel Finished" << std::endl;
+    std::cout << "Stream Identification Kernel Finished" << std::endl;
 
-    memcpy_err = cudaMemcpy(streamData, d_streamData, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
-    if (memcpy_err != cudaSuccess){
-        std::cerr << "Error copying stream data back from device" << std::endl;
-        CPLFree(flowData);
-        CPLFree(streamData);
-        cudaFree(d_flowData);
-        cudaFree(d_streamData);
+    std::cout << "Endpoint Identification Kernel Launched" << std::endl;
+    endpointIdentification<<<gridSize, blockSize>>>(d_flowDirData, d_streamData, d_endpointData, width, height);
+    if (cudaGetLastError() != cudaSuccess){
+        std::cerr << "Cuda kernel launch error." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
+        return -1;
+    }
+    cudaDeviceSynchronize();
+    std::cout << "Enpoint Identification Kernel Finished" << std::endl;
+
+    //copy results back to host
+    if (cudaMemcpy(streamData, d_streamData, sizeof(int) * width * height, cudaMemcpyDeviceToHost) != cudaSuccess ||
+        cudaMemcpy(endpointData, d_endpointData, sizeof(int) * width * height, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        std::cerr << "Error copying Stream data back from device." << std::endl;
+        cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
         return -1;
     }
 
-    err = streamDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, streamData, width, height, GDT_Int32, 0, 0);
-    if (err != CE_None){
+    // write results to output raster
+    if (streamDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, streamData, width, height, GDT_Int32, 0, 0) != CE_None ||
+        endpointDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height, endpointData, width, height, GDT_Int32, 0, 0) != CE_None){
         std::cerr << "Error writing stream data" << std::endl;
-        CPLFree(flowData);
-        CPLFree(streamData);
-        cudaFree(d_flowData);
+        cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
         return -1;
     }
 
-    CPLFree(flowData);
-    CPLFree(streamData);
-    cudaFree(d_flowData);
-    GDALClose(flowDataset);
-    GDALClose(streamDataset);
+    std::cout << "Stream data calculated and saved to: " << outputFilename1 << " and " <<outputFilename2 << std::endl;
 
-    std::cout << "Stream data calculated and saved to: " << outputFilename << std::endl;
+    //final resource cleanup
+    cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
     return 0;
 }
