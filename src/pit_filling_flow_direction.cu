@@ -22,7 +22,7 @@ __global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int*
 
     if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) return; //skip boundary 
     
-    __shared__ float sharedDem[BLOCK_DIM_X + 2][BLOCK_DIM_Y + 2 + 1]; //extra column padding
+    __shared__ float sharedDem[BLOCK_DIM_X + 2][BLOCK_DIM_Y + 2]; //extra column padding
 
     //local indices for use with padded shared
     int tx = threadIdx.x + 1;
