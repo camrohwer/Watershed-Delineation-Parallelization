@@ -10,8 +10,17 @@
 __constant__ int offsetX[9] = { 0,  -1,  0,  1, 1, 1, 0, -1, -1};
 __constant__ int offsetY[9] = { 0,  -1, -1, -1, 0, 1, 1,  1,  0};
 __constant__ int direction[9] = { 0, 1,  2,  3, 4, 5, 6,  7,  8}; 
+/*
+1: (-1,-1) 2: (0 ,-1) 3: (1,-1)
+8: (-1, 0) 0: (0 , 0) 4: (1 ,0)
+7: (-1, 1) 6: (0 , 1) 5: (1 ,1)
+*/
 
-
+__device__ int reverseDir(int dir){
+                    //  0, 1, 2, 3, 4, 5, 6, 7, 8
+    int reverseDir[] = {0, 5, 8, 7, 8, 1, 2, 3, 4};
+    return reverseDir[dir];
+}
 __global__ void streamIdentification(const int* flowAccum, int* stream, int threshold, int width, int height){
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -33,21 +42,21 @@ __global__ void endpointIdentification(const int* flowDir, const int* streams, i
 
     if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return; //skip boundary
 
-    if (streams[idx] == 1){
+    if (streams[idx] == 1 && flowDir[idx] == 0){
         int hasDownstream = 0;
         int flowDirection = flowDir[idx];
+        for (int i = 1; i < 9; i++){
+            int nx = x + offsetX[flowDirection];
+            int ny = y + offsetY[flowDirection];
 
-        int nx = x + offsetX[flowDirection];
-        int ny = y + offsetY[flowDirection];
+            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                int nIdx = ny * width + nx;
 
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-            int nIdx = ny * width + nx;
-
-            if (streams[nIdx] == 1){
-                hasDownstream = 1;
+                if (streams[nIdx] == 1 && flowDir[nIdx] == reverseDir(i)){
+                    hasDownstream = 1;
+                }
             }
         }
-
         endpoints[idx] = (hasDownstream == 0) ? 1 : 0;
     } else {
         endpoints[idx] = 0;
