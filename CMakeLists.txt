@@ -50,6 +50,10 @@ add_executable(stream_ident src/stream_identification.cu)
 
 target_link_libraries(stream_ident PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
+add_executable(watershed_delin src/flood_fill.cu)
+
+target_link_libraries(watershed_delin PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+
 # Run the GPU architecture detection program and capture the output
 execute_process(
     COMMAND ${CMAKE_CUDA_COMPILER} ${CMAKE_SOURCE_DIR}/src/detect_gpu_arch.cu -o detect_gpu_arch
@@ -70,7 +74,7 @@ endif()
 message(STATUS "Detected GPU architecture: compute_${GPU_ARCH}")
 
 # Use the detected architecture in the compile options
-foreach(cuda_target flow_direction_parallel pit_filling pit_filling_flow_direction flow_accum stream_ident)
+foreach(cuda_target flow_direction_parallel pit_filling pit_filling_flow_direction flow_accum stream_ident watershed_delin)
     target_compile_options(${cuda_target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_${GPU_ARCH},code=sm_${GPU_ARCH}>
         $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
