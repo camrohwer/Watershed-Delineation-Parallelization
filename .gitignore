@@ -22,3 +22,4 @@ nsight-systems-2024.6.1_2024.6.1.90-1_amd64.deb
 *~
 *.bak
 *.tmp
+cuda-repo-debian12-12-6-local_12.6.2-560.35.03-1_amd64.deb

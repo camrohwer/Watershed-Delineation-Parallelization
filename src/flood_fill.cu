@@ -76,7 +76,6 @@ void cleanup(GDALDataset* flowDirDataset, GDALDataset* endpointDataset, GDALData
     if (flowDirData) CPLFree(flowDirData);
     if (endpointData) CPLFree(endpointData);
     if (watershedData) CPLFree(watershedData);
-    if (watershedData) CPLFree(watershedData);
 
     if (d_flowDirData) cudaFree(d_flowDirData);
     if (d_endpointData) cudaFree(d_endpointData);
@@ -85,6 +84,7 @@ void cleanup(GDALDataset* flowDirDataset, GDALDataset* endpointDataset, GDALData
     if (d_idCounter) cudaFree(d_idCounter);
     if (d_stopFlag) cudaFree(d_stopFlag);
 }
+
 int main(int argc, char* argv[]){
     //ARGS: FlowDir, Endpoints, Watersheds
     if (argc < 4){
@@ -240,7 +240,7 @@ int main(int argc, char* argv[]){
         return -1;
     }
 
-    std::cout << "Watersheds delineated and writted to: " << outputFilename << std::endl;
+    std::cout << "Watersheds delineated and written to: " << outputFilename << std::endl;
     cleanup(flowDirDataset, endpointDataset, watershedDataset, flowDirData, endpointData, watershedData, neighbourIndices, d_flowDirData, d_endpointData, d_watershedData, d_neighbourIndices, d_idCounter, d_stopFlag);
     return 0;
 }
