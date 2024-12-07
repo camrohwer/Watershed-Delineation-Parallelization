@@ -15,7 +15,7 @@ __constant__ int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };
 __constant__ int offsetY[8] = { 0, -1, 0, 1, -1, -1, 1, 1 };
 __constant__ int direction[8] = { 8, 2, 4, 6, 1, 3, 5, 7 }; 
 
-__global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int* numPits, int width, int height, float hc) {
+__global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int* numPits, int width, int height, float hc, size_t pitch) {
     //unique thread index
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -23,13 +23,16 @@ __global__ void pitFillFlowDirectionKernel(const float* dem, int* flow_dir, int*
     if (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1) return; //skip boundary 
     
     __shared__ float sharedDem[BLOCK_DIM_X + 2][BLOCK_DIM_Y + 2]; //extra column padding
+    
 
     //local indices for use with padded shared
     int tx = threadIdx.x + 1;
     int ty = threadIdx.y + 1;
 
     //copy center pixel to shared
-    sharedDem[ty][tx] = dem[y * width + x];
+    //sharedDem[ty][tx] = dem[y * width + x];
+    sharedDem[ty][tx] = dem[y * pitch / sizeof(float) + x];
+
 
     //left padding 
     if (threadIdx.x == 0 && x > 0){
@@ -203,8 +206,10 @@ int main(int argc, char* argv[]) {
     cudaMemset(d_numPits, 0, sizeof(int));
 
     //allocating device mem
+    size_t pitch;
+    
     float *d_demData;
-    if (cudaMalloc(&d_demData, sizeof(float) * width * height) != cudaSuccess) {
+    if (cudaMallocPitch(&d_demData, &pitch, width * sizeof(float), height) != cudaSuccess) {
         std::cerr << "Error allocating memory for DEM on device." << std::endl;
         cleanup(demData, flowDirData, d_demData, nullptr, d_numPits);
         return -1;
@@ -229,7 +234,7 @@ int main(int argc, char* argv[]) {
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y); //dynamic grid allocation based on input size
 
     // Launch the CUDA kernel
-    pitFillFlowDirectionKernel<<<gridSize, blockSize, 0, stream>>>(d_demData, d_flowDirData, d_numPits, width, height, HEIGHT_CONST);
+    pitFillFlowDirectionKernel<<<gridSize, blockSize, 0, stream>>>(d_demData, d_flowDirData, d_numPits, width, height, HEIGHT_CONST,pitch);
 
     cudaError_t kernel_err = cudaGetLastError();
     if (kernel_err != cudaSuccess){
