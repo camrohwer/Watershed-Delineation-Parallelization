@@ -80,6 +80,7 @@ __global__ void flowDirectionKernel(int* dem, int* flow_dir, int width, int heig
 }
 
 int main(int argc, char* argv[]) {
+    //DEM, Flow Dir
     //checks for input file passed as arg
     if (argc < 3){
         std::cout << "Please provide a filepath for input and output raster" << std::endl;

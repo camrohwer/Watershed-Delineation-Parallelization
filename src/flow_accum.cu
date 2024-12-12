@@ -39,6 +39,7 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
 }
 
 int main(int argc, char* argv[]){
+    // FlowDir, FlowAccum
     if (argc < 3){
         std::cout << "Please provide a filepath for input and output raster" << std::endl;
         return -1;
@@ -167,7 +168,7 @@ int main(int argc, char* argv[]){
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
 
         //early termination to prevent infite looping if error in flow direction data
-        if (x == 500){
+        if (x == 10000){
             break;
         }
     } while (*stopFlag != 0);

@@ -42,6 +42,21 @@ __global__ void endpointIdentification(const int* flowDir, const int* streams, i
 
     if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return; //skip boundary
 
+    int dir = flowDir[idx]; // get direction of flow
+    int fX = x + offsetX[dir];
+    int fY = y + offsetY[dir];
+
+    int flow_to_boundary = 0;
+    if (fX == 0 || fX == width || fY == 0 || fY == height){
+        flow_to_boundary = 1;
+    }
+
+    if (flow_to_boundary == 1 && streams[idx] == 1){
+        endpoints[idx] = 1;
+        printf("Found endpoint Flow into boundary at x: %d, y: %d \n", x, y);
+        return;
+    }
+
     if (streams[idx] == 1 && flowDir[idx] == 0){
         int hasDownstream = 0;
         int flowDirection = flowDir[idx];
@@ -57,7 +72,12 @@ __global__ void endpointIdentification(const int* flowDir, const int* streams, i
                 }
             }
         }
-        endpoints[idx] = (hasDownstream == 0) ? 1 : 0;
+        if (hasDownstream == 0){
+            endpoints[idx] = 1;
+            printf("Found endpoint Flow into boundary at x: %d, y: %d \n", x, y);
+        } else {
+            endpoints[idx] = 0;
+        }
     } else {
         endpoints[idx] = 0;
     }
@@ -195,7 +215,7 @@ int main(int argc, char* argv[]){
 
     dim3 blockSize(BLOCK_DIM_X, BLOCK_DIM_Y);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y); //dynamic grid allocation based on input size
-    int threshold = 300;
+    int threshold = 100000;
 
     std::cout << "Stream Identification Kernel Launched" << std::endl;
     streamIdentification<<<gridSize, blockSize>>>(d_flowAccumData, d_streamData, threshold, width, height);
