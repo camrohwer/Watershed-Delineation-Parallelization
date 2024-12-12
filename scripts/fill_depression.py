@@ -3,17 +3,13 @@ import sys
 import os
 wbe = wbw.WbEnvironment()
 
-if __name__ == "__main__":
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
-
-    script_dir = os.path.dirname(os.path.realpath(__file__))  
-    source_path = os.path.join(script_dir, "../DEMs", input_file)  
-    dest_dir = os.path.join(script_dir, "../DEMs/Output")
-    dest_path = os.path.join(dest_dir, output_file)
-
-    input_dem = wbe.read_raster(source_path)
+def fill_depressions(input, output):
+    input_dem = wbe.read_raster(input)
     dem_depfill = wbe.fill_depressions(dem=input_dem, flat_increment=0.001)
-    wbe.write_raster(dem_depfill, dest_path, compress=True)
+    wbe.write_raster(dem_depfill, output, compress=True)
 
-
+if __name__ == "__main__":
+    input_path = sys.argv[1]
+    output_path = sys.argv[2]
+    fill_depressions(input_path, output_path)
+    
