@@ -21,36 +21,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Add include directories for GDAL
 include_directories(${GDAL_INCLUDE_DIRS})
 
-# Create an executable for the iterative (C++) version
-add_executable(flow_direction_iterative src/flow_direction_iterative.cpp)
-
-# Link the GDAL library to the C++ iterative executable
-target_link_libraries(flow_direction_iterative PRIVATE ${GDAL_LIBRARIES})
-
 # Create an executable for the parallel (CUDA) version
-add_executable(flow_direction_parallel src/flow_direction_parallel.cu)
+add_executable(flow_dir src/flow_direction.cu)
 
 # Link the GDAL library to the CUDA parallel executable
-target_link_libraries(flow_direction_parallel PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
+target_link_libraries(flow_dir PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
 # Run the GPU architecture detection program and capture the output
 add_executable(flow_accum src/flow_accum.cu)
 
 target_link_libraries(flow_accum PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
-add_executable(pit_filling src/pit_filling.cu)
-
-target_link_libraries(pit_filling PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
-
-add_executable(pit_filling_flow_direction src/pit_filling_flow_direction.cu)
-
-target_link_libraries(pit_filling_flow_direction PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
-
 add_executable(stream_ident src/stream_identification.cu)
 
 target_link_libraries(stream_ident PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
-add_executable(watershed_delin src/flood_fill.cu)
+add_executable(watershed_delin src/watershed_delineation.cu)
 
 target_link_libraries(watershed_delin PRIVATE ${GDAL_LIBRARIES} ${CUDA_LIBRARIES})
 
@@ -74,7 +60,7 @@ endif()
 message(STATUS "Detected GPU architecture: compute_${GPU_ARCH}")
 
 # Use the detected architecture in the compile options
-foreach(cuda_target flow_direction_parallel pit_filling pit_filling_flow_direction flow_accum stream_ident watershed_delin)
+foreach(cuda_target flow_dir flow_accum stream_ident watershed_delin)
     target_compile_options(${cuda_target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-gencode arch=compute_${GPU_ARCH},code=sm_${GPU_ARCH}>
         $<$<COMPILE_LANGUAGE:CUDA>:-Wno-deprecated-gpu-targets>
