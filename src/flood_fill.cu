@@ -6,6 +6,7 @@
 
 #define BLOCK_DIM_X 8
 #define BLOCK_DIM_Y 8
+#define THREADCELLS 4
 
 __constant__ int offsetX[9] = { 0,  -1,  0,  1, 1, 1, 0, -1, -1};
 __constant__ int offsetY[9] = { 0,  -1, -1, -1, 0, 1, 1,  1,  0};
@@ -51,17 +52,19 @@ __global__ void assignWatershedIDs(const int* endpoints, int* labels, int* idCou
 }
 
 __global__ void watershedLabelProp(const int* flowDir, const int* downstreamIdx, int* labels, int* modified, int width, int height){
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    int idx = y * width + x;
-    
-    if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) return; //skip boundary
+    int i = THREADCELLS * (blockIdx.x * blockDim.x + threadIdx.x);
+    int j = THREADCELLS * (blockIdx.y * blockDim.y + threadIdx.y);
 
-    if (labels[idx] == -1){
-        int nIdx = downstreamIdx[idx];
-        if (labels[nIdx] != -1){
-            labels[idx] = labels[nIdx];
-            atomicOr(modified, 1);
+    for (int r = i; r < i + THREADCELLS && r < height; r++){
+        for (int s = j; s < j + THREADCELLS && s < width; s++){
+            int idx = r * width + s;
+            if (labels[idx] == -1){
+                int nIdx = downstreamIdx[idx];
+                if (labels[nIdx] != -1){
+                    labels[idx] = labels[nIdx];
+                    atomicOr(modified, 1);
+                }
+            }
         }
     }
 }
@@ -222,7 +225,7 @@ int main(int argc, char* argv[]){
         cudaDeviceSynchronize();
         cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost);
 
-        if (x == 500){
+        if (x == 10000){
             break;
         }
     } while(*stopFlag != 0);
