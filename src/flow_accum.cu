@@ -28,11 +28,10 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
 
-                if (newR >= 0 && newR < N && newS >= 0 && newS < M) {
-                    atomicAdd(&gpuNewFlow[newR * M + newS], curFlow);
-                    atomicAdd(&gpuAccum[newR * M + newS], curFlow);
-                    atomicOr(gpuStop, 1);
-                }
+                int valid = (newR >= 0 && newR < N && newS >= 0 && newS < M);
+                atomicAdd(&gpuNewFlow[newR * M + newS], valid * curFlow);
+                atomicAdd(&gpuAccum[newR * M + newS], valid * curFlow);
+                atomicOr(gpuStop, 1);
             } 
         }
     }
