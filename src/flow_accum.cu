@@ -6,8 +6,8 @@
 #include <cstdlib>
 
 #define THREADCELLS 4
-#define BLOCK_SIZE 8
-#define TILE_SIZE 8
+#define BLOCK_SIZE 16
+#define TILE_SIZE 16
 
 __constant__ int offsetX[9] = {0, -1,  0,  1,  1,  1,  0, -1, -1};
 __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
@@ -51,16 +51,25 @@ __global__ void tiledToRow(int* input, int* output, int rows, int cols, int tile
 
 //Each thread handles a THREADCELLS x THREADCELLS neighbourhood
 __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, const int * flowDir, int* gpuStop, const int N, const int M){
+    __shared__ int blockStop;
+    int localStop = 0;
+    if (threadIdx.x == 0 && threadIdx.y == 0) blockStop = 0;
+    __syncthreads();
+
     int i = THREADCELLS * (blockIdx.y * blockDim.y + threadIdx.y);
     int j = THREADCELLS * (blockIdx.x * blockDim.x + threadIdx.x);
     
     for (int r = i; r < i + THREADCELLS && r < N; r++){
         for (int s = j; s < j + THREADCELLS && s < M; s++){
-            int curFlow = gpuOldFlow[getTiledIndex(r, s, N, M, TILE_SIZE)];
+            int idx = getTiledIndex(r, s, N, M, TILE_SIZE);
+            int curFlow = gpuOldFlow[idx];
+
             if (curFlow > 0){
-                gpuOldFlow[getTiledIndex(r, s, N, M, TILE_SIZE)] = 0;
-                int cellFlowDir = flowDir[getTiledIndex(r, s, N, M, TILE_SIZE)]; 
+                gpuOldFlow[idx] = 0;
+                int cellFlowDir = flowDir[idx]; 
+
                 if (cellFlowDir == 0) continue;
+
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
 
@@ -70,10 +79,19 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
                 if (valid && new_idx != -1){
                     atomicAdd(&gpuNewFlow[new_idx], valid * curFlow);
                     atomicAdd(&gpuAccum[new_idx], valid * curFlow);
-                    atomicOr(gpuStop, 1);
+                    localStop = 1;
                 }
             } 
         }
+    }
+    int warpStop = __any_sync(0xFFFFFFFF, localStop);
+    if (warpStop && threadIdx.x == 0 && threadIdx.y == 0){
+        blockStop = 1;
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0 && threadIdx.y == 0 && blockStop){
+        atomicOr(gpuStop, 1);
     }
 }
 
@@ -201,7 +219,7 @@ int main(int argc, char* argv[]){
     int *stopFlag = new int(0);
 
     do{
-        //printf("Kernel iteration: %d\n", iters++ + 1);
+        printf("Kernel iteration: %d\n", iters++ + 1);
         *stopFlag = 0;
         cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
@@ -219,7 +237,7 @@ int main(int argc, char* argv[]){
         d_oldFlow = d_newFlow;
         d_newFlow = temp;
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
-    } while (*stopFlag != 0 && iters < 30000);
+    } while (*stopFlag != 0 && iters < 5000);
 
     int *hostflowAccumulationData = (int *)CPLMalloc(sizeof(int) * width * height);
     tiledToRow<<<gridSize, blockSize>>>(d_accum, d_oldFlow, height, width, TILE_SIZE);
