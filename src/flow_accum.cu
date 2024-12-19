@@ -201,7 +201,7 @@ int main(int argc, char* argv[]){
     int *stopFlag = new int(0);
 
     do{
-        printf("Kernel iteration: %d\n", iters++ + 1);
+        //printf("Kernel iteration: %d\n", iters++ + 1);
         *stopFlag = 0;
         cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
@@ -219,7 +219,7 @@ int main(int argc, char* argv[]){
         d_oldFlow = d_newFlow;
         d_newFlow = temp;
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
-    } while (*stopFlag != 0 && iters < 15000);
+    } while (*stopFlag != 0 && iters < 30000);
 
     int *hostflowAccumulationData = (int *)CPLMalloc(sizeof(int) * width * height);
     tiledToRow<<<gridSize, blockSize>>>(d_accum, d_oldFlow, height, width, TILE_SIZE);
