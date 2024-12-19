@@ -5,9 +5,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-#define THREADCELLS 4
-#define BLOCK_SIZE 16
-#define TILE_SIZE 16
+#define THREADCELLS 8
+#define BLOCK_SIZE 32
+#define TILE_SIZE 32
 
 __constant__ int offsetX[9] = {0, -1,  0,  1,  1,  1,  0, -1, -1};
 __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
@@ -50,7 +50,7 @@ __global__ void tiledToRow(int* input, int* output, int rows, int cols, int tile
 }
 
 //Each thread handles a THREADCELLS x THREADCELLS neighbourhood
-__global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, const int * flowDir, int* gpuStop, const int N, const int M){
+__global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, const int * flowDir, int* gpuStop, const int N, const int M, int* updates){
     __shared__ int blockStop;
     int localStop = 0;
     if (threadIdx.x == 0 && threadIdx.y == 0) blockStop = 0;
@@ -79,6 +79,7 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
                 if (valid && new_idx != -1){
                     atomicAdd(&gpuNewFlow[new_idx], valid * curFlow);
                     atomicAdd(&gpuAccum[new_idx], valid * curFlow);
+                    updates[idx] = 1;
                     localStop = 1;
                 }
             } 
@@ -156,6 +157,11 @@ int main(int argc, char* argv[]){
 
     //allocating device mem
     int *d_oldFlow, *d_newFlow, *d_flowDir, *d_flowDirTiled, *d_accum, *d_stopFlag;
+
+    int *d_updated;
+
+    cudaMalloc(&d_updated, width*height*sizeof(int));
+    cudaMemset(d_updated, 0, sizeof(int) * width * height);   
     
     // Allocate memory for d_oldFlow on device
     if (cudaMalloc(&d_oldFlow, width * height * sizeof(int)) != cudaSuccess) {
@@ -223,7 +229,7 @@ int main(int argc, char* argv[]){
         *stopFlag = 0;
         cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
-        flowAccumKernel<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDirTiled, d_stopFlag, height, width);
+        flowAccumKernel<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDirTiled, d_stopFlag, height, width, d_updated);
 
         cudaError_t kernelErr = cudaGetLastError();
         if (kernelErr != cudaSuccess){
@@ -233,11 +239,12 @@ int main(int argc, char* argv[]){
         cudaDeviceSynchronize();
         cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost);
 
+        cudaMemset(d_updated, 0, sizeof(int) * width * height);   
         int *temp = d_oldFlow;
         d_oldFlow = d_newFlow;
         d_newFlow = temp;
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
-    } while (*stopFlag != 0 && iters < 5000);
+    } while (*stopFlag != 0 && iters < 100000);
 
     int *hostflowAccumulationData = (int *)CPLMalloc(sizeof(int) * width * height);
     tiledToRow<<<gridSize, blockSize>>>(d_accum, d_oldFlow, height, width, TILE_SIZE);
@@ -250,6 +257,15 @@ int main(int argc, char* argv[]){
         return -1;
     }
     
+    cudaMemcpy(hostOldFlow, d_updated, sizeof(int) * width * height, cudaMemcpyDeviceToHost); //temp use of oldFlow to hold converted row order format matrix before writing
+
+    int counter = 0;
+    for (int i = 0; i < width*height; i++){
+        if (hostOldFlow[i] == 1){
+            counter++;
+        }
+    }
+    std::cout << "Number of cells updated: " << counter << std::endl;
     //perform cleanup
     cudaFree(d_oldFlow); cudaFree(d_newFlow); cudaFree(d_flowDir);
     cudaFree(d_stopFlag); cudaFree(d_accum);
@@ -257,4 +273,8 @@ int main(int argc, char* argv[]){
     GDALClose(D8Dataset); GDALClose(flowAccumDataset);
     delete[] hostOldFlow; delete[] hostNewFlow;
     return 0;
+    
+
+        
+
 }
