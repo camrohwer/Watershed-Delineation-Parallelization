@@ -46,10 +46,14 @@ __global__ void endpointIdentification(const int* flowDir, const int* streams, i
     int fX = x + offsetX[dir];
     int fY = y + offsetY[dir];
 
+    /*
     int flow_to_boundary = 0;
     if (fX == 0 || fX == (width - 1) || fY == 0 || fY == height){
         flow_to_boundary = 1;
     }
+    */
+
+    int flow_to_boundary = (fX == 0 || fX == (width - 1) || fY == 0 || fY == height);
 
     if (flow_to_boundary == 1 && streams[idx] == 1){
         endpoints[idx] = 1;

@@ -6,7 +6,7 @@
 #include <cstdlib>
 
 #define THREADCELLS 4
-#define BLOCK_SIZE 8
+#define BLOCK_SIZE 16
 
 __constant__ int offsetX[9] = {0, -1,  0,  1,  1,  1,  0, -1, -1};
 __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
@@ -17,7 +17,7 @@ __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
 __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, const int * flowDir, int* gpuStop, const int N, const int M){
     int i = THREADCELLS * (blockIdx.y * blockDim.y + threadIdx.y);
     int j = THREADCELLS * (blockIdx.x * blockDim.x + threadIdx.x);
-
+    
     for (int r = i; r < i + THREADCELLS && r < N; r++){
         for (int s = j; s < j + THREADCELLS && s < M; s++){
             int curFlow = gpuOldFlow[r * M + s];
