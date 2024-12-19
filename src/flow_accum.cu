@@ -6,12 +6,48 @@
 #include <cstdlib>
 
 #define THREADCELLS 4
-#define BLOCK_SIZE 16
+#define BLOCK_SIZE 8
+#define TILE_SIZE 8
 
 __constant__ int offsetX[9] = {0, -1,  0,  1,  1,  1,  0, -1, -1};
 __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
                             // 0,  1,  2,  3,  4,  5,  6,  7,  8 
 
+__device__ int getTiledIndex(int row, int col, int rows, int cols, int tile_size){
+    if (row< 0 || row >= rows || col < 0 || col >= cols) return -1;
+
+    int tiles_per_row = (cols + tile_size - 1) / tile_size;
+    int tile_x = col / tile_size;
+    int tile_y = row / tile_size;
+
+    int offset_x = col % tile_size;
+    int offset_y = row % tile_size;
+
+    int tile_index = (tile_y * tiles_per_row + tile_x) * tile_size * tile_size;
+    int local_index = offset_y * tile_size + offset_x;
+    
+    return tile_index + local_index;
+}
+
+__global__ void rowToTiled( int* input, int* output, int rows, int cols, int tile_size) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+     
+    if (x < cols && y < rows) {
+        int tiled_index = getTiledIndex(y, x, rows, cols, tile_size);
+        output[tiled_index] = input[y * cols + x];
+    }
+}
+
+__global__ void tiledToRow(int* input, int* output, int rows, int cols, int tile_size) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < cols && y < rows) {
+        int tiled_index = getTiledIndex(y, x, rows, cols, tile_size);
+        output[y * cols + x] = input[tiled_index];
+    }
+}
 
 //Each thread handles a THREADCELLS x THREADCELLS neighbourhood
 __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow, const int * flowDir, int* gpuStop, const int N, const int M){
@@ -20,18 +56,22 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
     
     for (int r = i; r < i + THREADCELLS && r < N; r++){
         for (int s = j; s < j + THREADCELLS && s < M; s++){
-            int curFlow = gpuOldFlow[r * M + s];
+            int curFlow = gpuOldFlow[getTiledIndex(r, s, N, M, TILE_SIZE)];
             if (curFlow > 0){
-                gpuOldFlow[r * M + s] = 0;
-                int cellFlowDir = flowDir[r * M + s]; 
+                gpuOldFlow[getTiledIndex(r, s, N, M, TILE_SIZE)] = 0;
+                int cellFlowDir = flowDir[getTiledIndex(r, s, N, M, TILE_SIZE)]; 
                 if (cellFlowDir == 0) continue;
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
 
                 int valid = (newR >= 0 && newR < N && newS >= 0 && newS < M);
-                atomicAdd(&gpuNewFlow[newR * M + newS], valid * curFlow);
-                atomicAdd(&gpuAccum[newR * M + newS], valid * curFlow);
-                atomicOr(gpuStop, 1);
+                int new_idx = getTiledIndex(newR, newS, N, M, TILE_SIZE);
+
+                if (valid && new_idx != -1){
+                    atomicAdd(&gpuNewFlow[new_idx], valid * curFlow);
+                    atomicAdd(&gpuAccum[new_idx], valid * curFlow);
+                    atomicOr(gpuStop, 1);
+                }
             } 
         }
     }
@@ -97,7 +137,7 @@ int main(int argc, char* argv[]){
     }
 
     //allocating device mem
-    int *d_oldFlow, *d_newFlow, *d_flowDir, *d_accum, *d_stopFlag;
+    int *d_oldFlow, *d_newFlow, *d_flowDir, *d_flowDirTiled, *d_accum, *d_stopFlag;
     
     // Allocate memory for d_oldFlow on device
     if (cudaMalloc(&d_oldFlow, width * height * sizeof(int)) != cudaSuccess) {
@@ -114,7 +154,11 @@ int main(int argc, char* argv[]){
         std::cerr << "Error allocating memory for Flow Direction on device" << std::endl;
         return -1;
     }
-      // Allocate memory for d_flowDir on device
+    if (cudaMalloc(&d_flowDirTiled, width * height * sizeof(int)) != cudaSuccess) {
+        std::cerr << "Error allocating memory for Flow Direction Tiled on device" << std::endl;
+        return -1;
+    }
+      // Allocate memory for d_accum on device
     if (cudaMalloc(&d_accum, width * height * sizeof(int)) != cudaSuccess) {
         std::cerr << "Error allocating memory for Flow Direction on device" << std::endl;
         return -1;
@@ -131,6 +175,7 @@ int main(int argc, char* argv[]){
         std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err_flowDir) << std::endl;
         return -1;
     }
+
     int* hostOldFlow = new int[width * height];
     int* hostNewFlow = new int [width*height];
     for (int i = 0; i < width * height; ++i) hostOldFlow[i] = 1, hostNewFlow[i] = 0;
@@ -143,15 +188,24 @@ int main(int argc, char* argv[]){
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
 
-    int x = 0;
+    rowToTiled<<<gridSize, blockSize>>>(d_flowDir, d_flowDirTiled, height, width, TILE_SIZE);
+    cudaDeviceSynchronize();
+
+    cudaError_t kernel_err = cudaGetLastError();
+    if (kernel_err != cudaSuccess){
+        std::cerr << "Cuda kernel launch error: " << cudaGetErrorString(kernel_err) << std::endl;
+        return -1;
+    }
+
+    int iters = 0;
     int *stopFlag = new int(0);
 
     do{
-        printf("Kernel iteration: %d\n", x++ + 1);
+        printf("Kernel iteration: %d\n", iters++ + 1);
         *stopFlag = 0;
         cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
-        flowAccumKernel<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDir, d_stopFlag, height, width);
+        flowAccumKernel<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDirTiled, d_stopFlag, height, width);
 
         cudaError_t kernelErr = cudaGetLastError();
         if (kernelErr != cudaSuccess){
@@ -165,15 +219,11 @@ int main(int argc, char* argv[]){
         d_oldFlow = d_newFlow;
         d_newFlow = temp;
         cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
-
-        //early termination to prevent infite looping if error in flow direction data
-        if (x == 10000){
-            break;
-        }
-    } while (*stopFlag != 0);
+    } while (*stopFlag != 0 && iters < 15000);
 
     int *hostflowAccumulationData = (int *)CPLMalloc(sizeof(int) * width * height);
-    cudaMemcpy(hostflowAccumulationData, d_accum, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
+    tiledToRow<<<gridSize, blockSize>>>(d_accum, d_oldFlow, height, width, TILE_SIZE);
+    cudaMemcpy(hostflowAccumulationData, d_oldFlow, sizeof(int) * width * height, cudaMemcpyDeviceToHost); //temp use of oldFlow to hold converted row order format matrix before writing
 
     err = flowAccumDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
         hostflowAccumulationData, width, height, GDT_Int32, 0, 0);
