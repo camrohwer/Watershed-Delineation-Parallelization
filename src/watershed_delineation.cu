@@ -4,8 +4,8 @@
 #include <cstdlib>
 #include <iostream>
 
-#define BLOCK_DIM_X 8
-#define BLOCK_DIM_Y 8
+#define BLOCK_DIM_X 16
+#define BLOCK_DIM_Y 16
 #define THREADCELLS 4
 
 __constant__ int offsetX[9] = { 0,  -1,  0,  1, 1, 1, 0, -1, -1};
@@ -174,9 +174,9 @@ int main(int argc, char* argv[]){
             return -1;
     }
 
-    if (cudaMemcpy(d_flowDirData, flowDirData, sizeof(int) * width * height, cudaMemcpyHostToDevice) != cudaSuccess ||
-        cudaMemcpy(d_endpointData, endpointData, sizeof(int) * width * height, cudaMemcpyHostToDevice) != cudaSuccess ||
-        cudaMemcpy(d_idCounter, &idCounter, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) {
+    if (cudaMemcpyAsync(d_flowDirData, flowDirData, sizeof(int) * width * height, cudaMemcpyHostToDevice) != cudaSuccess ||
+        cudaMemcpyAsync(d_endpointData, endpointData, sizeof(int) * width * height, cudaMemcpyHostToDevice) != cudaSuccess ||
+        cudaMemcpyAsync(d_idCounter, &idCounter, sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) {
         std::cerr << "Error copying data to device." << std::endl;
         cleanup(flowDirDataset, endpointDataset, watershedDataset, flowDirData, endpointData, watershedData, neighbourIndices, d_flowDirData, d_endpointData, d_watershedData, d_neighbourIndices, d_idCounter, d_stopFlag);
         return -1;
@@ -185,53 +185,56 @@ int main(int argc, char* argv[]){
     dim3 blockSize(BLOCK_DIM_X, BLOCK_DIM_Y);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y); //dynamic grid allocation based on input size
 
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
+
     // precompute downstream neighbour indices
     std::cout << "Launching neighbour index precomputation Kernel" <<std::endl;
-    neighbourIndicePrecompute<<<gridSize, blockSize>>>(d_flowDirData, d_neighbourIndices, width, height);
+    neighbourIndicePrecompute<<<gridSize, blockSize, 0>>>(d_flowDirData, d_neighbourIndices, width, height);
     if (cudaGetLastError() != cudaSuccess){
         std::cerr << "Cuda kernel launch error." << std::endl;
         cleanup(flowDirDataset, endpointDataset, watershedDataset, flowDirData, endpointData, watershedData, neighbourIndices, d_flowDirData, d_endpointData, d_watershedData, d_neighbourIndices, d_idCounter, d_stopFlag);
         return -1;
     }
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(stream);
     std::cout << "Finished neighbour index precomputation Kernel" <<std::endl;
     
     // assign watershed labels
     std::cout << "Launching Watershed Label Assignment Kernel" <<std::endl;
-    assignWatershedIDs<<<gridSize, blockSize>>>(d_endpointData, d_watershedData, d_idCounter, width, height);
+    assignWatershedIDs<<<gridSize, blockSize, 0, stream>>>(d_endpointData, d_watershedData, d_idCounter, width, height);
     if (cudaGetLastError() != cudaSuccess){
         std::cerr << "Cuda kernel launch error." << std::endl;
         cleanup(flowDirDataset, endpointDataset, watershedDataset, flowDirData, endpointData, watershedData, neighbourIndices, d_flowDirData, d_endpointData, d_watershedData, d_neighbourIndices, d_idCounter, d_stopFlag);
         return -1;
     }
-    cudaDeviceSynchronize();
+    cudaStreamSynchronize(stream);
     std::cout << "Finished Watershed Label Assignment Kernel" <<std::endl;
     
     // pull-based label propogation
     int x = 0;
     int *stopFlag = new int(0);
     do{
-        //printf("Kernel iteration: %d\n", x++ + 1);
+        printf("Kernel iteration: %d\n", x++ + 1);
         x++;
         *stopFlag = 0;
-        cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpyAsync(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
-        watershedLabelProp<<<gridSize, blockSize>>>(d_flowDirData, d_neighbourIndices, d_watershedData, d_stopFlag, height, width);
+        watershedLabelProp<<<gridSize, blockSize, 0, stream>>>(d_flowDirData, d_neighbourIndices, d_watershedData, d_stopFlag, height, width);
         cudaError_t kernelErr = cudaGetLastError();
         if (kernelErr != cudaSuccess){
             std::cerr << "Error launching kernel: " << cudaGetErrorString(kernelErr) << std::endl;
             return -1;
         }
-        cudaDeviceSynchronize();
-        cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaStreamSynchronize(stream);
+        cudaMemcpyAsync(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost);
 
-        if (x == 10000){
+        if (x > 100000){
             break;
         }
     } while(*stopFlag != 0);
     printf("Ran %d label propogation kernel Iterations\n", x);
     
-    if (cudaMemcpy(watershedData, d_watershedData, sizeof(int) * width * height, cudaMemcpyDeviceToHost) != cudaSuccess){
+    if (cudaMemcpyAsync(watershedData, d_watershedData, sizeof(int) * width * height, cudaMemcpyDeviceToHost) != cudaSuccess){
         std::cerr << "Error copying back delineated watersheds" << std::endl;
         cleanup(flowDirDataset, endpointDataset, watershedDataset, flowDirData, endpointData, watershedData, neighbourIndices, d_flowDirData, d_endpointData, d_watershedData, d_neighbourIndices, d_idCounter, d_stopFlag);
         return -1;
@@ -245,5 +248,6 @@ int main(int argc, char* argv[]){
 
     std::cout << "Watersheds delineated and written to: " << outputFilename << std::endl;
     cleanup(flowDirDataset, endpointDataset, watershedDataset, flowDirData, endpointData, watershedData, neighbourIndices, d_flowDirData, d_endpointData, d_watershedData, d_neighbourIndices, d_idCounter, d_stopFlag);
+    cudaStreamDestroy(stream);
     return 0;
 }

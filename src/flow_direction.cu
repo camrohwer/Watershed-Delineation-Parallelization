@@ -5,8 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 
-#define BLOCK_DIM_X 8
-#define BLOCK_DIM_Y 8
+#define BLOCK_DIM_X 16
+#define BLOCK_DIM_Y 16
 #define FLOW_NODATA -1
 
 __constant__ int offsetX[8] = { -1, 0, 1, 0, -1, 1, 1, -1 };

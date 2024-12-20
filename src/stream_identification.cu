@@ -211,7 +211,6 @@ int main(int argc, char* argv[]){
         cleanup(flowAccumData, flowDirData, streamData, d_flowAccumData, d_flowDirData, d_streamData, flowAccumDataset, flowDirDataset, streamDataset, endpointDataset);
         return -1;
     }
-    
 
     dim3 blockSize(BLOCK_DIM_X, BLOCK_DIM_Y);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y); //dynamic grid allocation based on input size

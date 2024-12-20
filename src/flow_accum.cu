@@ -6,7 +6,7 @@
 #include <cstdlib>
 
 #define THREADCELLS 4
-#define BLOCK_SIZE 8
+#define BLOCK_SIZE 16
 
 __constant__ int offsetX[9] = {0, -1,  0,  1,  1,  1,  0, -1, -1};
 __constant__ int offsetY[9] = {0, -1, -1, -1,  0,  1,  1,  1,  0};
@@ -20,18 +20,20 @@ __global__ void flowAccumKernel(int* gpuAccum, int* gpuOldFlow, int* gpuNewFlow,
 
     for (int r = i; r < i + THREADCELLS && r < N; r++){
         for (int s = j; s < j + THREADCELLS && s < M; s++){
-            int curFlow = gpuOldFlow[r * M + s];
+            int idx = r * M + s;
+            int curFlow = gpuOldFlow[idx];
             if (curFlow > 0){
-                gpuOldFlow[r * M + s] = 0;
-                int cellFlowDir = flowDir[r * M + s]; 
+                gpuOldFlow[idx] = 0;
+                int cellFlowDir = flowDir[idx]; 
                 if (cellFlowDir == 0) continue;
                 int newR = r + offsetY[cellFlowDir];
                 int newS = s + offsetX[cellFlowDir];
 
                 int valid = (newR >= 0 && newR < N && newS >= 0 && newS < M);
-                atomicAdd(&gpuNewFlow[newR * M + newS], valid * curFlow);
-                atomicAdd(&gpuAccum[newR * M + newS], valid * curFlow);
-                atomicOr(gpuStop, 1);
+                int new_idx = newR * M + newS;
+                atomicAdd(&gpuNewFlow[new_idx], valid * curFlow);
+                atomicAdd(&gpuAccum[new_idx], valid * curFlow);
+                atomicOr(gpuStop, valid * 1);
             } 
         }
     }
@@ -126,7 +128,7 @@ int main(int argc, char* argv[]){
     }
         
     //copy flow direction data to device
-    cudaError_t memcpy_err_flowDir = cudaMemcpy(d_flowDir, flowDir, sizeof(int) * width * height, cudaMemcpyHostToDevice);
+    cudaError_t memcpy_err_flowDir = cudaMemcpyAsync(d_flowDir, flowDir, sizeof(int) * width * height, cudaMemcpyHostToDevice);
     if (memcpy_err_flowDir != cudaSuccess){
         std::cerr << "Error copying data to device: " << cudaGetErrorString(memcpy_err_flowDir) << std::endl;
         return -1;
@@ -135,13 +137,16 @@ int main(int argc, char* argv[]){
     int* hostNewFlow = new int [width*height];
     for (int i = 0; i < width * height; ++i) hostOldFlow[i] = 1, hostNewFlow[i] = 0;
 
-    cudaMemcpy(d_oldFlow, hostOldFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_newFlow, hostNewFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemset(d_accum, 0, sizeof(int) * width * height);   
+    cudaMemcpyAsync(d_oldFlow, hostOldFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(d_newFlow, hostNewFlow, width * height * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemsetAsync(d_accum, 0, sizeof(int) * width * height);   
 
     //define grid and block size
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
     dim3 gridSize((width + blockSize.x - 1) / blockSize.x, (height + blockSize.y - 1) / blockSize.y);
+
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
 
     int x = 0;
     int *stopFlag = new int(0);
@@ -149,31 +154,32 @@ int main(int argc, char* argv[]){
     do{
         printf("Kernel iteration: %d\n", x++ + 1);
         *stopFlag = 0;
-        cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpyAsync(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice);
 
-        flowAccumKernel<<<gridSize, blockSize>>>(d_accum, d_oldFlow, d_newFlow, d_flowDir, d_stopFlag, height, width);
+        flowAccumKernel<<<gridSize, blockSize, 0, stream>>>(d_accum, d_oldFlow, d_newFlow, d_flowDir, d_stopFlag, height, width);
 
         cudaError_t kernelErr = cudaGetLastError();
         if (kernelErr != cudaSuccess){
             std::cerr << "Error launching kernel: " << cudaGetErrorString(kernelErr) << std::endl;
             return -1;
         }
-        cudaDeviceSynchronize();
-        cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpyAsync(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost);
+        cudaStreamSynchronize(stream);
 
         int *temp = d_oldFlow;
         d_oldFlow = d_newFlow;
         d_newFlow = temp;
-        cudaMemset(d_newFlow, 0, sizeof(int) * width * height);
+        cudaMemsetAsync(d_newFlow, 0, sizeof(int) * width * height);
 
         //early termination to prevent infite looping if error in flow direction data
-        if (x == 10000){
+        if (x == 100000){
             break;
         }
     } while (*stopFlag != 0);
 
     int *hostflowAccumulationData = (int *)CPLMalloc(sizeof(int) * width * height);
-    cudaMemcpy(hostflowAccumulationData, d_accum, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(hostflowAccumulationData, d_accum, sizeof(int) * width * height, cudaMemcpyDeviceToHost);
+    cudaStreamSynchronize(stream);
 
     err = flowAccumDataset->GetRasterBand(1)->RasterIO(GF_Write, 0, 0, width, height,
         hostflowAccumulationData, width, height, GDT_Int32, 0, 0);
@@ -188,5 +194,6 @@ int main(int argc, char* argv[]){
     CPLFree(flowDir);
     GDALClose(D8Dataset); GDALClose(flowAccumDataset);
     delete[] hostOldFlow; delete[] hostNewFlow;
+    cudaStreamDestroy(stream);
     return 0;
 }
