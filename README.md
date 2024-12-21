@@ -1,6 +1,6 @@
 # Watershed Delineation Project
 
-This project implements watershed delineation algorithms using both iterative and parallel approaches using C++ and CUDA respectively. The goal is to efficiently process Digital Elevation Models (DEMs) to perform watershed Delineation.
+This project performs watershed delineation using parallel processing in CUDA. The goal is to efficiently process Digital Elevation Models (DEMs) to perform watershed Delineation.
 
 ## Table of Contents
 
@@ -89,28 +89,10 @@ make
 
 You can run the alorithms using the following commands:
 
-### Iterative Flow Direction
-
-```bash
-./flow_direction_iterative /relative/path/to/input/DEM /relative/path/to/output/Raster
-```
-
-### Parallel Flow Direction
+### Flow Direction
 
 ```bash
 ./flow_direction_parallel /relative/path/to/input/DEM /relative/path/to/output/Raster
-```
-
-### Pit Filling
-
-```bash
-./pit_filling /relative/path/to/input/DEM /relative/path/to/output/DEM
-```
-
-### Combined Pit Filling and Flow Direction
-
-```bash
-./pit_filling_flow_direction /relative/path/to/input/DEM /relative/path/to/output/Raster
 ```
 
 ### Flow Accumulation
@@ -118,6 +100,20 @@ You can run the alorithms using the following commands:
 ```bash
 ./flow_accum /relative/path/to/input/Flow/Direction/Raster /relative/path/to/output/Raster
 ```
+
+### Stream and Endpoint Identification
+
+```bash
+./stream_ident /relative/path/to/input/Flow/Accumulation/Raster /relative/path/to/input/Flow/Direction/Raster /relative/path/to/stream/Raster /relative/path/to/endpoint/Raster
+```
+
+
+### Watershed Delineation
+
+```bash
+./watershed_delin /relative/path/to/input/Flow/Direction/Raster /relative/path/to/endpoint/Raster /relative/path/to/watershed/Raster 
+```
+
 
 ## Scripting
 
@@ -131,6 +127,8 @@ These can be run from the main project directory using:
 python scripts/script.py 
 ```
 
+## Thanks / Acknowledgments
+- Special thanks [Whitebox Tools] for providing [Raster Preprocessing] in this project.
 ## License
 
 Distributed under the MIT License.
