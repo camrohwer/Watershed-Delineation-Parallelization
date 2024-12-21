@@ -1,6 +1,6 @@
-# Watershed Delineation Project
+# Watershed Delineation in Parallel
 
-This project performs watershed delineation using parallel processing in CUDA. The goal is to efficiently process Digital Elevation Models (DEMs) to perform watershed Delineation.
+This project performs watershed delineation using parallel processing in CUDA. The goal is to efficiently process Digital Elevation Models (DEMs) to perform Watershed Delineation.
 
 ## Table of Contents
 
@@ -40,6 +40,7 @@ my_project/
 - `Dockerfile`: Instructions for building the Docker image.
 - `src/`: Contains the source code for the iterative and parallel implementations.
 - `build/`: Output directory for the build files.
+- `scripts/`: Various scripts for testing and workflows.
 - `DEMs/`: Directory for input and output raster files.
 - `CMakeLists.txt`: Configuration file for CMake.
 - `README.md`: This documentation file.
@@ -132,7 +133,7 @@ These can be run from the main project directory using:
 python scripts/script.py 
 ```
 
-## Thanks and Acknowledgments
+## Thanks and Acknowledgements
 - Special thanks [Whitebox Tools](https://github.com/jblindsay/whitebox-tools) for providing Raster Preprocessing in this project.
   
 ## License
