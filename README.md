@@ -10,6 +10,7 @@ This project performs watershed delineation using parallel processing in CUDA. T
 - [Building the Project](#building-the-project)
 - [Running the Algorithms](#running-the-algorithms)
 - [Scripting](#scripting)
+- [Thanks & Acknowledgements](#thanks-and-acknowledgements)
 - [License](#license)
 
 ## Requirements
@@ -24,9 +25,13 @@ This project performs watershed delineation using parallel processing in CUDA. T
 my_project/  
 ├── Dockerfile  
 ├── src/  
-│   ├── flow_direction_iterative.cpp  
-│   ├── flow_direction_parallel.cu  
+│   ├── flow_direction.cu  
+│   ├── flow_accum.cu  
+│   ├── stream_identification.cu  
+│   ├── watershed_delineation.cu  
+│   ├── detect_gpu_arch.cu  
 ├── build/  
+├── scripts/  
 ├── DEMs/  
 │   ├── Output/  
 ├── CMakeLists.txt  
@@ -127,8 +132,9 @@ These can be run from the main project directory using:
 python scripts/script.py 
 ```
 
-## Thanks / Acknowledgments
-- Special thanks [Whitebox Tools] for providing [Raster Preprocessing] in this project.
+## Thanks and Acknowledgments
+- Special thanks [Whitebox Tools](https://github.com/jblindsay/whitebox-tools) for providing Raster Preprocessing in this project.
+  
 ## License
 
 Distributed under the MIT License.
